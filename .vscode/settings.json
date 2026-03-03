@@ -1,3 +1,15 @@
 {
-  "cSpell.words": ["rngs", "Seedable"]
+  "cSpell.words": [
+    "dotenv",
+    "imagehash",
+    "ipython",
+    "matplotlib",
+    "pokemontcgsdk",
+    "rngs",
+    "Seedable",
+    "streamlit",
+    "torchvision",
+    "ultralytics",
+    "venv"
+  ]
 }
