@@ -1,0 +1,319 @@
+/* Pokémon TCG–inspired design system. Official-style colors and layout. */
+:root {
+  --pkmn-yellow: #ffcb05;
+  --pkmn-yellow-dark: #e6b800;
+  --pkmn-blue: #2a75bb;
+  --pkmn-blue-dark: #1d3557;
+  --pkmn-navy: #1d2c5e;
+  --pkmn-red: #e3350d;
+  --pkmn-red-dark: #c42d0b;
+  --pkmn-white: #ffffff;
+  --pkmn-gray: #f0f0f0;
+  --pkmn-border: #d4af37;
+  --card-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  --card-radius: 12px;
+  --btn-radius: 8px;
+  --font-sans: "Segoe UI", "Nunito", system-ui, sans-serif;
+  --font-display: "Segoe UI", "Nunito", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--pkmn-navy);
+  background: linear-gradient(180deg, #f5f7fa 0%, #e8ecf1 50%, #dde4ec 100%);
+}
+
+/* Header: official-style bar */
+.site-header {
+  background: linear-gradient(135deg, var(--pkmn-blue) 0%, var(--pkmn-navy) 100%);
+  color: var(--pkmn-white);
+  padding: 0.75rem 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.site-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: var(--pkmn-white);
+  font-weight: 700;
+  font-size: 1.35rem;
+}
+
+.site-logo img { height: 40px; width: auto; }
+.site-logo:hover { color: var(--pkmn-yellow); }
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  flex-wrap: wrap;
+}
+
+.site-nav a {
+  color: var(--pkmn-white);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--btn-radius);
+  transition: background 0.2s, color 0.2s;
+}
+
+.site-nav a:hover {
+  background: rgba(255,255,255,0.2);
+  color: var(--pkmn-yellow);
+}
+
+/* Main content: card-style container */
+.main-wrap {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.page-title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--pkmn-navy);
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.page-subtitle {
+  color: var(--pkmn-blue-dark);
+  margin: 0 0 1.5rem;
+  font-size: 1rem;
+}
+
+/* Card panel (like a TCG card frame) */
+.card-panel {
+  background: var(--pkmn-white);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  border: 2px solid var(--pkmn-border);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.card-panel h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--pkmn-navy);
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--pkmn-yellow);
+}
+
+/* Primary CTA: Open a Pack style */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.75rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--pkmn-navy);
+  background: linear-gradient(180deg, var(--pkmn-yellow) 0%, var(--pkmn-yellow-dark) 100%);
+  border: 2px solid #c9a227;
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 0 3px 0 #b8960e, 0 4px 8px rgba(0,0,0,0.15);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.btn-primary:hover {
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 #b8960e, 0 3px 6px rgba(0,0,0,0.15);
+}
+
+.btn-primary:active {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 #b8960e, 0 1px 4px rgba(0,0,0,0.15);
+}
+
+/* Secondary buttons */
+.btn-secondary {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  color: var(--pkmn-white);
+  background: var(--pkmn-blue);
+  border: none;
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover { background: var(--pkmn-navy); }
+
+/* Danger (delete) */
+.btn-danger {
+  background: transparent;
+  color: var(--pkmn-red);
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration: underline;
+  padding: 0;
+  font-size: inherit;
+}
+
+.btn-danger:hover { color: var(--pkmn-red-dark); }
+
+/* Forms */
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; font-weight: 600; margin-bottom: 0.35rem; color: var(--pkmn-navy); }
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  border: 2px solid #ccc;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--pkmn-blue);
+}
+.form-row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; }
+.form-row .form-group { margin-bottom: 0; }
+
+.checkbox-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; }
+.checkbox-label input { width: auto; }
+
+/* Tables (e.g. piles, pack result) */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.data-table th,
+.data-table td {
+  padding: 0.65rem 0.85rem;
+  text-align: left;
+  border-bottom: 1px solid #e0e0e0;
+}
+.data-table th {
+  background: var(--pkmn-navy);
+  color: var(--pkmn-white);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+.data-table tr:hover td { background: #f8f9fa; }
+.data-table .cell-actions a { margin-right: 0.5rem; }
+
+/* Pack result: slot cards */
+.slot-cards { display: flex; flex-direction: column; gap: 1rem; }
+.slot-card {
+  background: linear-gradient(145deg, #fff 0%, #f8f9fa 100%);
+  border: 2px solid var(--pkmn-border);
+  border-radius: var(--card-radius);
+  padding: 1rem 1.25rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.slot-card .slot-badge {
+  background: var(--pkmn-blue);
+  color: white;
+  font-weight: 700;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.slot-card .pile-name { font-weight: 600; color: var(--pkmn-navy); }
+.slot-card .instruction {
+  font-family: ui-monospace, monospace;
+  font-size: 1.05rem;
+  background: var(--pkmn-gray);
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+}
+
+/* Hero on home: pack graphic + CTA */
+.hero {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+.hero-visual { flex-shrink: 0; }
+.hero-visual img { width: 140px; height: auto; display: block; }
+.hero-content { flex: 1; min-width: 200px; }
+.hero-content .btn-primary { margin-top: 0.5rem; }
+
+/* Warning banner */
+.alert-warning {
+  background: linear-gradient(135deg, #fff8e6 0%, #ffecb3 100%);
+  border: 2px solid var(--pkmn-yellow-dark);
+  border-radius: var(--card-radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  font-weight: 600;
+  color: #7d5a00;
+}
+
+/* Footer */
+.site-footer {
+  text-align: center;
+  padding: 1.5rem 1rem;
+  color: var(--pkmn-blue-dark);
+  font-size: 0.9rem;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 2rem;
+}
+
+/* Links */
+a { color: var(--pkmn-blue); font-weight: 600; }
+a:hover { color: var(--pkmn-red); text-decoration: underline; }
+
+/* Home quick links */
+.quick-links { list-style: none; padding: 0; margin: 1rem 0; }
+.quick-links li { margin: 0.5rem 0; }
+.quick-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  text-decoration: none;
+  color: var(--pkmn-navy);
+  font-weight: 600;
+}
+.quick-links a:hover { color: var(--pkmn-blue); }
+
+/* Settings summary */
+.settings-summary {
+  background: #f0f4f8;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  color: var(--pkmn-blue-dark);
+  margin-top: 1rem;
+}
