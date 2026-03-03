@@ -1,13 +1,13 @@
 # Pokemon Pack Picker
 
+![Open a Booster Pack](/static/images/open-a-booster-pack.png)
+
 Self-hosted web app to build Pokemon TCG–style packs from your own card piles. Uses official-style slot order and rarity odds, and outputs **A/B halving instructions** so you can quickly locate each card in a physical stack without counting.
 
 - **Pack layout**: Physical slot order matches real packs (e.g. slot 5 = rare). Modern 5-card layout is implemented; Classic/Legacy are stubbed for future use.
 - **Piles**: Trainers (one pool, pure random), Energy (per-type even, optional "out" list), Bulk (multiple piles weighted by size), Value (price range → rarity proxy).
 - **Running counts**: Estimated pile sizes are decremented after each generated pack. When any pile drops below 40 cards you get a warning to refill or combine.
 - **Pile management**: Add, edit, delete, **combine** (merge two piles into one; old piles are deleted), **split** (create a new pile from an existing one with a given count).
-
-![Open a Booster Pack](/static/images/open-a-booster-pack.png)
 
 ## Run locally
 
