@@ -1,6 +1,6 @@
-//! Persisted app state: piles and settings (JSON file).
+//! Persisted app state: piles, settings, and pack history (JSON file).
 
-use crate::models::{Pile, Settings};
+use crate::models::{PackHistoryEntry, Pile, Settings};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +10,9 @@ use tokio::sync::RwLock;
 pub struct PersistedState {
     pub piles: Vec<Pile>,
     pub settings: Settings,
+    /// Past packs (newest first) for history view and recognized card display.
+    #[serde(default)]
+    pub pack_history: Vec<PackHistoryEntry>,
 }
 
 impl Default for PersistedState {
@@ -17,6 +20,7 @@ impl Default for PersistedState {
         Self {
             piles: Vec::new(),
             settings: Settings::default(),
+            pack_history: Vec::new(),
         }
     }
 }

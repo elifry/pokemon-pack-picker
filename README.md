@@ -39,6 +39,10 @@ PPP_DATA=/path/to/state.json cargo run
 
 ![Your Booster Pack](/static/images/your-booster-pack.png)
 
+## Card recognition (optional)
+
+Card recognition is **optional** and **on by default**. When enabled, each slot on a new pack shows a camera button: you scan the card you put in that slot and a **local** recognition service identifies it; the app stores the result and can show name, set, and image (from the Pokemon TCG API). You can turn it off in Settings—the camera buttons then disappear and the app works as before. To set up the local recognition service, see **[Image recognition setup](docs/image-recognition-setup.md)**.
+
 ## Requirements
 
 - At least one **Trainers** pile, one or more **Bulk** piles, and (if you use value/rarity) **Value** piles with optional price ranges.

@@ -3,18 +3,20 @@
 mod models;
 mod odds;
 mod pack_gen;
+mod recognition;
 mod selection;
 mod state;
 
 use axum::{
-    Form, Router,
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
+    Form, Router,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use state::{AppState, SharedState, load_state, save_state};
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -126,7 +128,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .nest_service("/static", ServeDir::new("static"))
         .route("/", get(index))
         .route("/pack", post(generate_pack))
-        .route("/pack/result", get(pack_result_placeholder))
+        .route("/pack/history", get(pack_history_index))
+        .route("/pack/result/:id", get(pack_result_by_id))
+        .route("/pack/result/:id/slot/:slot/scan", post(scan_slot_card))
+        .route("/pack/result/:id/slot/:slot/card", post(update_slot_card))
+        .route("/settings/image-rec/disable", post(disable_image_rec))
         .route("/piles", get(piles_index).post(create_pile))
         .route("/piles/combine", get(combine_form).post(do_combine))
         .route("/piles/split", get(split_form).post(do_split))
@@ -165,6 +171,7 @@ fn base_layout(title: &str, content: &str) -> String {
 <nav class="site-nav">
 <a href="/">Home</a>
 <a href="/piles">My Piles</a>
+<a href="/pack/history">Pack history</a>
 <a href="/settings">Settings</a>
 </nav>
 </header>
@@ -253,13 +260,34 @@ async fn generate_pack(State(state): State<SharedState>) -> impl IntoResponse {
     let mut rng = StdRng::from_entropy();
     match pack_gen::generate_pack(&mut guard.data, &mut rng) {
         Ok(result) => {
+            let pack_id = Uuid::new_v4();
+            let created_at = Utc::now().to_rfc3339();
+            let slots: Vec<models::SlotHistoryEntry> = result
+                .slots
+                .iter()
+                .map(|s| models::SlotHistoryEntry {
+                    slot_number: s.slot_number,
+                    slot_role: s.slot_role.clone(),
+                    pile_name: s.pile_name.clone(),
+                    instruction_display: s.instruction.display_string(),
+                    recognized_card_id: None,
+                    card_name: None,
+                    card_holo: None,
+                    card_image_url: None,
+                })
+                .collect();
+            let entry = models::PackHistoryEntry {
+                id: pack_id,
+                created_at: created_at.clone(),
+                slots,
+                warning: result.warning.clone(),
+            };
+            guard.data.pack_history.insert(0, entry);
             drop(guard);
             if let Err(e) = save(&state).await {
                 tracing::error!("Failed to save state: {}", e);
             }
-            // Render result directly
-            let body = render_pack_result(&result);
-            Html(body).into_response()
+            Redirect::to(&format!("/pack/result/{}", pack_id)).into_response()
         }
         Err(e) => {
             let content = format!(
@@ -282,22 +310,25 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn render_pack_result(result: &pack_gen::PackResult) -> String {
-    let slot_cards: String = result
-        .slots
+async fn pack_result_by_id(
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let guard = state.read().await;
+    let entry = guard
+        .data
+        .pack_history
         .iter()
-        .map(|s| {
-            format!(
-                r#"<div class="slot-card"><span class="slot-badge">Slot {} · {}</span><span class="pile-name">{}</span><span class="instruction">{}</span></div>"#,
-                s.slot_number,
-                s.slot_role,
-                html_escape(&s.pile_name),
-                html_escape(&s.instruction.display_string())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let warning = result
+        .find(|p| p.id == id);
+    let Some(entry) = entry else {
+        let content = format!(
+            r#"<h1 class="page-title">Pack not found</h1><div class="card-panel"><p>This pack may have been cleared. <a href="/pack/history">View pack history</a> or <a href="/">open a new pack</a>.</p></div>"#
+        );
+        return Html(base_layout("Pack not found", &content)).into_response();
+    };
+    let image_rec_enabled = guard.data.settings.image_rec_enabled;
+    let slot_cards = render_slot_cards_for_pack(entry, image_rec_enabled, id);
+    let warning = entry
         .warning
         .as_ref()
         .map(|w| {
@@ -307,21 +338,363 @@ fn render_pack_result(result: &pack_gen::PackResult) -> String {
             )
         })
         .unwrap_or_default();
+    let script = include_script_for_pack_result(image_rec_enabled);
     let content = format!(
         r#"<h1 class="page-title">Your Booster Pack</h1>
-<p class="page-subtitle">Fill each slot in order. Go to the pile, apply the A/B sequence (A = top half, B = bottom half), then use the final number when you have 10 or fewer cards left.</p>
+<p class="page-subtitle">Fill each slot in order. Go to the pile, apply the A/B sequence (A = top half, B = bottom half), then use the final number when you have 10 or fewer cards left. <a href="/pack/history">View past packs</a>.</p>
 {}
 <div class="slot-cards">{}</div>
 <div class="card-panel">
-<p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">My piles</a></p>
-</div>"#,
-        warning, slot_cards
+<p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">My piles</a> &nbsp; <a href="/pack/history" class="btn-secondary">Pack history</a></p>
+</div>
+<div id="recognition-modal" class="recognition-modal" style="display:none" aria-hidden="true">
+<div class="recognition-modal-content">
+<p id="recognition-modal-message">Card recognition isn't set up. You can disable it in Settings or set up the local recognition service.</p>
+<p><a href="/docs/image-recognition-setup.html" target="_blank" rel="noopener">Setup guide</a></p>
+<button type="button" id="recognition-modal-disable" class="btn-secondary">Disable card recognition</button>
+<button type="button" id="recognition-modal-keep" class="btn-primary">Keep it on</button>
+</div>
+</div>
+<script>{}</script>"#,
+        warning, slot_cards, script
     );
-    base_layout("Your pack", &content)
+    Html(base_layout("Your pack", &content)).into_response()
 }
 
-async fn pack_result_placeholder() -> impl IntoResponse {
-    Redirect::to("/")
+fn render_slot_cards_for_pack(
+    entry: &models::PackHistoryEntry,
+    image_rec_enabled: bool,
+    pack_id: Uuid,
+) -> String {
+    entry
+        .slots
+        .iter()
+        .map(|s| {
+            let has_card = s.recognized_card_id.is_some()
+                || s.card_name.is_some()
+                || s.card_image_url.is_some();
+            let card_block = if has_card {
+                let name = s
+                    .card_name
+                    .as_deref()
+                    .unwrap_or("(Unknown card)");
+                let img = s.card_image_url.as_deref().unwrap_or("");
+                let holo_str = s
+                    .card_holo
+                    .map(|h| if h { "Holo" } else { "Non-holo" })
+                    .unwrap_or("");
+                format!(
+                    r#"<span class="slot-card-details"><img src="{}" alt="" class="slot-card-thumb" onerror="this.style.display='none'"><span class="slot-card-name">{}</span><span class="slot-card-holo">{}</span>
+<form method="post" action="/pack/result/{}/slot/{}/card" class="slot-card-edit-form" style="display:inline">
+<input type="text" name="card_name" value="{}" placeholder="Card name">
+<label class="checkbox-label"><input type="checkbox" name="card_holo" value="1" {}> Holo</label>
+<button type="submit" class="btn-small">Save</button>
+<button type="submit" name="regenerate_image" value="1" class="btn-small">Regenerate image</button>
+</form></span>"#,
+                    html_escape(img),
+                    html_escape(name),
+                    html_escape(holo_str),
+                    pack_id,
+                    s.slot_number,
+                    html_escape(name),
+                    if s.card_holo == Some(true) {
+                        "checked"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                String::new()
+            };
+            let camera_btn = if image_rec_enabled {
+                format!(
+                    r#"<button type="button" class="btn-camera slot-scan-btn" data-pack-id="{}" data-slot="{}" title="Scan card for this slot" aria-label="Scan card">📷</button>"#,
+                    pack_id, s.slot_number
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                r#"<div class="slot-card" data-slot="{}"><span class="slot-badge">Slot {} · {}</span><span class="pile-name">{}</span><span class="instruction">{}</span><span class="slot-card-actions">{}</span>{}</div>"#,
+                s.slot_number,
+                s.slot_number,
+                html_escape(&s.slot_role),
+                html_escape(&s.pile_name),
+                html_escape(&s.instruction_display),
+                camera_btn,
+                card_block
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn include_script_for_pack_result(image_rec_enabled: bool) -> String {
+    if !image_rec_enabled {
+        return String::new();
+    }
+    // Run after DOM is ready so .slot-scan-btn and #recognition-modal exist when we bind events.
+    r#"
+function initRecognition(){
+  var modal = document.getElementById('recognition-modal');
+  var msg = document.getElementById('recognition-modal-message');
+  var btnDisable = document.getElementById('recognition-modal-disable');
+  var btnKeep = document.getElementById('recognition-modal-keep');
+  function showModal(message) {
+    if (msg) msg.textContent = message || "Card recognition isn't set up.";
+    if (modal) { modal.style.display = 'flex'; modal.setAttribute('aria-hidden', 'false'); }
+  }
+  function hideModal() {
+    if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden', 'true'); }
+  }
+  if (btnDisable) btnDisable.addEventListener('click', function(){
+    fetch('/settings/image-rec/disable', { method: 'POST' }).then(function(){ window.location.reload(); });
+  });
+  if (btnKeep) btnKeep.addEventListener('click', hideModal);
+  var btns = document.querySelectorAll('.slot-scan-btn');
+  btns.forEach(function(btn){
+    btn.addEventListener('click', function(ev){
+      ev.preventDefault();
+      var packId = btn.getAttribute('data-pack-id');
+      var slot = btn.getAttribute('data-slot');
+      if (!packId || !slot) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showModal("Camera not supported in this browser. You can disable card recognition in Settings.");
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(stream){
+        var v = document.createElement('video');
+        v.srcObject = stream;
+        v.play();
+        v.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:9998;background:#000;';
+        document.body.appendChild(v);
+        var canvas = document.createElement('canvas');
+        function stop(){ stream.getTracks().forEach(function(t){ t.stop(); }); v.remove(); }
+        function capture(){
+          canvas.width = v.videoWidth;
+          canvas.height = v.videoHeight;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(v, 0, 0);
+          stop();
+          canvas.toBlob(function(blob){
+            var fd = new FormData();
+            fd.append('image', blob, 'card.jpg');
+            fetch('/pack/result/' + packId + '/slot/' + slot + '/scan', { method: 'POST', body: fd })
+              .then(function(r){
+                if (r.status === 503) throw { notConfigured: true };
+                if (!r.ok) throw new Error('Scan failed');
+                window.location.reload();
+              })
+              .catch(function(e){
+                if (e && e.notConfigured) showModal("Card recognition isn't set up. Disable it or set up the local service (see Setup guide).");
+                else alert('Scan failed. Try again or disable card recognition in Settings.');
+              });
+          }, 'image/jpeg', 0.9);
+        }
+        v.addEventListener('loadeddata', function(){ setTimeout(capture, 500); }, { once: true });
+      }).catch(function(err){
+        showModal("Camera access denied or unavailable. You can disable card recognition in Settings.");
+      });
+    });
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initRecognition);
+else initRecognition();
+"#
+    .to_string()
+}
+
+async fn pack_history_index(State(state): State<SharedState>) -> impl IntoResponse {
+    let guard = state.read().await;
+    let list: String = guard
+        .data
+        .pack_history
+        .iter()
+        .take(50)
+        .map(|p| {
+            let date = p.created_at.get(..10).unwrap_or(&p.created_at);
+            format!(
+                r#"<tr><td><a href="/pack/result/{}">Pack — {}</a></td><td>{} slots</td></tr>"#,
+                p.id,
+                html_escape(date),
+                p.slots.len()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content = format!(
+        r#"<h1 class="page-title">Pack history</h1>
+<p class="page-subtitle">Click a pack to see slot instructions and any recognized cards.</p>
+<div class="card-panel">
+<table class="data-table"><thead><tr><th>Pack</th><th>Slots</th></tr></thead><tbody>
+{}
+</tbody></table>
+</div>
+<p><a href="/" class="btn-primary">Open a new pack</a> <a href="/piles" class="btn-secondary">My piles</a></p>"#,
+        if list.is_empty() {
+            r#"<tr><td colspan="2">No packs yet. <a href="/">Open a pack</a> to get started.</td></tr>"#.to_string()
+        } else {
+            list
+        }
+    );
+    Html(base_layout("Pack history", &content)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PackSlotPath {
+    id: Uuid,
+    slot: u32,
+}
+
+async fn scan_slot_card(
+    State(state): State<SharedState>,
+    Path(p): Path<PackSlotPath>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let id = p.id;
+    let slot = p.slot;
+    let image_rec_enabled = {
+        let guard = state.read().await;
+        guard.data.settings.image_rec_enabled
+    };
+    if !image_rec_enabled {
+        return (axum::http::StatusCode::BAD_REQUEST, [("content-type", "application/json")], r#"{"error":"disabled"}"#.to_string()).into_response();
+    }
+    let service_url = {
+        let guard = state.read().await;
+        guard
+            .data
+            .settings
+            .image_rec_service_url
+            .clone()
+            .filter(|u| !u.trim().is_empty())
+    };
+    let Some(url) = service_url else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [("content-type", "application/json")],
+            r#"{"error":"not_configured"}"#.to_string(),
+        )
+            .into_response();
+    };
+    let mut image_bytes = Vec::new();
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name().as_deref() == Some("image") {
+            if let Ok(data) = field.bytes().await {
+                image_bytes = data.to_vec();
+                break;
+            }
+        }
+    }
+    if image_bytes.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            [("content-type", "application/json")],
+            r#"{"error":"no_image"}"#.to_string(),
+        )
+            .into_response();
+    }
+    let card_id = match recognition::recognize_card(&url, &image_bytes).await {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                [("content-type", "application/json")],
+                r#"{"error":"service_unavailable"}"#.to_string(),
+            )
+                .into_response();
+        }
+    };
+    let details = match recognition::fetch_card_details(&card_id).await {
+        Ok(d) => d,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                [("content-type", "application/json")],
+                r#"{"error":"api_failed"}"#.to_string(),
+            )
+                .into_response();
+        }
+    };
+    let mut guard = state.write().await;
+    let entry = guard
+        .data
+        .pack_history
+        .iter_mut()
+        .find(|p| p.id == id);
+    if let Some(entry) = entry {
+        if let Some(slot_entry) = entry.slots.iter_mut().find(|s| s.slot_number == slot) {
+            slot_entry.recognized_card_id = Some(details.id.clone());
+            slot_entry.card_name = Some(details.name.clone());
+            slot_entry.card_image_url = Some(details.image_url.clone());
+        }
+    }
+    drop(guard);
+    if save(&state).await.is_err() {
+        tracing::error!("Failed to save state after scan");
+    }
+    let body = serde_json::json!({ "cardId": card_id }).to_string();
+    (
+        axum::http::StatusCode::OK,
+        [("content-type", "application/json")],
+        body,
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateSlotCardForm {
+    card_name: Option<String>,
+    card_holo: Option<String>,
+    regenerate_image: Option<String>,
+}
+
+async fn update_slot_card(
+    State(state): State<SharedState>,
+    Path(p): Path<PackSlotPath>,
+    Form(f): Form<UpdateSlotCardForm>,
+) -> impl IntoResponse {
+    let id = p.id;
+    let slot = p.slot;
+    let mut guard = state.write().await;
+    let entry = guard
+        .data
+        .pack_history
+        .iter_mut()
+        .find(|p| p.id == id);
+    let Some(entry) = entry else {
+        return Redirect::to("/pack/history").into_response();
+    };
+    let Some(slot_entry) = entry.slots.iter_mut().find(|s| s.slot_number == slot) else {
+        return Redirect::to(&format!("/pack/result/{}", id)).into_response();
+    };
+    if let Some(name) = &f.card_name {
+        slot_entry.card_name = Some(name.trim().to_string());
+    }
+    slot_entry.card_holo = Some(f.card_holo.as_deref() == Some("1"));
+    if f.regenerate_image.as_deref() == Some("1") {
+        if let Some(ref card_id) = slot_entry.recognized_card_id {
+            if let Ok(details) = recognition::fetch_card_details(card_id).await {
+                slot_entry.card_name = Some(details.name);
+                slot_entry.card_image_url = Some(details.image_url);
+            }
+        }
+    }
+    drop(guard);
+    if save(&state).await.is_err() {
+        tracing::error!("Failed to save state after card update");
+    }
+    Redirect::to(&format!("/pack/result/{}", id)).into_response()
+}
+
+async fn disable_image_rec(State(state): State<SharedState>) -> impl IntoResponse {
+    let mut guard = state.write().await;
+    guard.data.settings.image_rec_enabled = false;
+    drop(guard);
+    if save(&state).await.is_err() {
+        tracing::error!("Failed to save state");
+    }
+    Redirect::to("/settings").into_response()
 }
 
 // --------------- Piles ---------------
@@ -732,6 +1105,7 @@ async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
     .collect::<Vec<_>>()
     .join("\n");
     let energy_out = s.energy_types_out.join(", ");
+    let image_rec_url = s.image_rec_service_url.as_deref().unwrap_or("");
     let content = format!(
         r#"<h1 class="page-title">Settings</h1>
 <p class="page-subtitle">Pack format and energy options. Changes apply to the next pack you open.</p>
@@ -741,13 +1115,20 @@ async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
 <div class="form-group"><label>Pack type</label><select name="pack_type">{}</select></div>
 <div class="form-group"><label class="checkbox-label"><input type="checkbox" name="add_energy" value="1" {}> Add Energy card to packs</label></div>
 <div class="form-group"><label>Energy types to exclude (comma-separated)</label><input type="text" name="energy_types_out" value="{}" placeholder="e.g. Fire, Water"></div>
+<hr>
+<h2>Card recognition (optional)</h2>
+<p>When enabled, a camera button appears on each slot so you can scan cards and track what you pulled. <a href="/static/docs/image-recognition-setup.html" target="_blank" rel="noopener">How to set up the local recognition service</a>.</p>
+<div class="form-group"><label class="checkbox-label"><input type="checkbox" name="image_rec_enabled" value="1" {}> Enable card recognition (camera scan)</label></div>
+<div class="form-group"><label>Recognition service URL</label><input type="url" name="image_rec_service_url" value="{}" placeholder="e.g. http://127.0.0.1:5000"></div>
 <button type="submit" class="btn-primary">Save settings</button> <a href="/" class="btn-secondary">Back home</a>
 </form>
 </div>"#,
         s.pack_size,
         pack_type_options,
         if s.add_energy_to_packs { "checked" } else { "" },
-        html_escape(&energy_out)
+        html_escape(&energy_out),
+        if s.image_rec_enabled { "checked" } else { "" },
+        html_escape(image_rec_url)
     );
     Html(base_layout("Settings", &content)).into_response()
 }
@@ -758,6 +1139,8 @@ struct SettingsForm {
     pack_type: Option<String>,
     add_energy: Option<String>,
     energy_types_out: Option<String>,
+    image_rec_enabled: Option<String>,
+    image_rec_service_url: Option<String>,
 }
 
 async fn update_settings(
@@ -782,6 +1165,15 @@ async fn update_settings(
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
             .collect();
+    }
+    guard.data.settings.image_rec_enabled = f.image_rec_enabled.as_deref() == Some("1");
+    if let Some(s) = &f.image_rec_service_url {
+        let u = s.trim().to_string();
+        guard.data.settings.image_rec_service_url = if u.is_empty() {
+            None
+        } else {
+            Some(u)
+        };
     }
     drop(guard);
     if save(&state).await.is_err() {

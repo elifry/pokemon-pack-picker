@@ -96,6 +96,16 @@ pub struct Settings {
     /// Energy type IDs to treat as "out" (excluded from energy draw).
     #[serde(default)]
     pub energy_types_out: Vec<String>,
+    /// Card recognition via camera: show scan button and store recognized cards (default true).
+    #[serde(default = "default_true")]
+    pub image_rec_enabled: bool,
+    /// URL of local recognition service (e.g. http://127.0.0.1:5000/recognize). Empty = not configured.
+    #[serde(default)]
+    pub image_rec_service_url: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -105,8 +115,43 @@ impl Default for Settings {
             pack_type: PackTypeId::Modern,
             add_energy_to_packs: false,
             energy_types_out: Vec::new(),
+            image_rec_enabled: true,
+            image_rec_service_url: None,
         }
     }
+}
+
+// --------------- Pack history (for viewing past packs and recognized cards) ---------------
+
+/// One slot in a saved pack: A/B instruction plus optional recognized card data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlotHistoryEntry {
+    pub slot_number: u32,
+    pub slot_role: String,
+    pub pile_name: String,
+    pub instruction_display: String,
+    /// Pokemon TCG API card id (e.g. swsh12-123) from recognition; None if not scanned.
+    #[serde(default)]
+    pub recognized_card_id: Option<String>,
+    /// Display name (from API or user override).
+    #[serde(default)]
+    pub card_name: Option<String>,
+    /// Holo / reverse holo (user can edit).
+    #[serde(default)]
+    pub card_holo: Option<bool>,
+    /// Card image URL (from API or after regenerate).
+    #[serde(default)]
+    pub card_image_url: Option<String>,
+}
+
+/// A saved pack: created when user opens a pack; can be viewed later and shows A/B or card details.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackHistoryEntry {
+    pub id: Uuid,
+    pub created_at: String,
+    pub slots: Vec<SlotHistoryEntry>,
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 /// Critical low threshold: below this, pile is considered too small for reliable A/B drawing.
