@@ -7,6 +7,8 @@ Self-hosted web app to build Pokemon TCG–style packs from your own card piles.
 - **Running counts**: Estimated pile sizes are decremented after each generated pack. When any pile drops below 40 cards you get a warning to refill or combine.
 - **Pile management**: Add, edit, delete, **combine** (merge two piles into one; old piles are deleted), **split** (create a new pile from an existing one with a given count).
 
+![Open a Booster Pack](/static/images/open-a-booster-pack.png)
+
 ## Run locally
 
 Run from the **project root** so static assets (CSS, images) load correctly:

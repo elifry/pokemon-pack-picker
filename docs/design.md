@@ -26,6 +26,10 @@
 
 - All state in `PersistedState`: `piles`, `settings`. Saved to a single JSON file (default `./data/state.json`). No auth; single-user localhost.
 
+## Home hero: booster sprite sheet
+
+- `static/images/booster-sheet.webp`: **474 px × 753 px**. Expandable grid in `src/main.rs`: **`HERO_SPRITE_GRID_COLS`** × **`HERO_SPRITE_GRID_ROWS`** (e.g. 2×2, 3×3, 3×5). One random cell (col, row) is shown. **`hero_sprite_edge_types(col, row, cols, rows)`** returns (top, right, bottom, left) as **Inner** (boundary with another cell) or **Outer** (edge of sheet). Corners have 2 outer edges; middle cell in 3×3 has 0; others have 1. **`hero_sprite_cell_rect(col, row, cols, rows)`** uses those to apply trim per edge: **`HERO_SPRITE_TRIM_AT_WIDTH_BOUNDARY`** / **`_HEIGHT`** for inner edges (gap between packs), **`HERO_SPRITE_TRIM_AT_OUTER_WIDTH`** / **`_OUTER_HEIGHT`** for outer edges. start = cell origin + left/top trim; width/height = cell size − left_trim − right_trim (and same for height). Set to **0** for no trim on that edge type. Reload to see a different cell.
+
 ## Critical low
 
 - Piles below 40 cards trigger a warning after pack generation (see `CRITICAL_LOW_THRESHOLD` in `models.rs`). User is expected to refill, combine, or enter a clear count.

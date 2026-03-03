@@ -2,9 +2,9 @@
 
 use crate::models::{Pile, PileType, Rarity};
 use crate::odds::{
-    price_range_to_rarity, rarity_at_least, roll_rarity_for_slot, PackLayout, SlotRole,
+    PackLayout, SlotRole, price_range_to_rarity, rarity_at_least, roll_rarity_for_slot,
 };
-use crate::selection::{ab_instruction_for_index, generate_ab_instruction, AbInstruction};
+use crate::selection::{AbInstruction, ab_instruction_for_index, generate_ab_instruction};
 use crate::state::PersistedState;
 use rand::Rng;
 use std::collections::HashMap;

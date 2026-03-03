@@ -87,8 +87,8 @@ pub fn ab_instruction_for_index(pile_size: u32, index: u32, rng: &mut impl Rng) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     #[test]
     fn ab_sequence_reduces_pile() {

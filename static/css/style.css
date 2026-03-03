@@ -256,17 +256,31 @@ body {
   border: 1px solid #ddd;
 }
 
-/* Hero on home: pack graphic + CTA */
+/* Hero on home: pack graphic + CTA (title and content beside pack). Pack size set from server. */
 .hero {
   display: flex;
-  align-items: center;
-  gap: 2rem;
+  align-items: flex-start;
+  gap: 1.5rem;
   flex-wrap: wrap;
   margin-bottom: 2rem;
 }
 .hero-visual { flex-shrink: 0; }
 .hero-visual img { width: 140px; height: auto; display: block; }
+.hero-booster-sprite {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.hero-booster-sprite img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  object-fit: fill;
+}
 .hero-content { flex: 1; min-width: 200px; }
+.hero-content .page-title { margin-top: 0; }
 .hero-content .btn-primary { margin-top: 0.5rem; }
 
 /* Warning banner */

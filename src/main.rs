@@ -7,20 +7,96 @@ mod selection;
 mod state;
 
 use axum::{
+    Form, Router,
     extract::{Path, State},
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
-    Form, Router,
 };
-use rand::rngs::StdRng;
-use tower_http::services::ServeDir;
 use rand::SeedableRng;
-use state::{load_state, save_state, AppState, SharedState};
+use rand::rngs::StdRng;
+use state::{AppState, SharedState, load_state, save_state};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tower_http::services::ServeDir;
 use tracing::info;
 use uuid::Uuid;
+
+// --------------- Hero sprite sheet (expandable grid) ---------------
+// Sprite sheet is divided into a grid of cells. One random cell is shown.
+// Each cell has four edges; each edge is either Inner (boundary with another cell) or Outer (edge of sheet).
+// Corners have 2 outer edges; middle cells have 0 outer edges; others have 1. Trim amounts depend on edge type.
+
+/// Grid size: cols × rows (e.g. 2×2, 3×3, 3×5). Cell (col, row) with col in 0..cols, row in 0..rows.
+const HERO_SPRITE_GRID_COLS: u32 = 2;
+const HERO_SPRITE_GRID_ROWS: u32 = 2;
+
+/// Trim at inner edges (boundaries between cells). Percent of full image; removes white gap between packs.
+const HERO_SPRITE_TRIM_AT_WIDTH_BOUNDARY: f64 = 2.0;
+const HERO_SPRITE_TRIM_AT_HEIGHT_BOUNDARY: f64 = 0.0;
+
+/// Trim at outer edges (left/right/top/bottom of the sprite sheet). Percent of full image; set to 0 to keep sheet edges as-is.
+const HERO_SPRITE_TRIM_AT_OUTER_WIDTH: f64 = 6.0;
+const HERO_SPRITE_TRIM_AT_OUTER_HEIGHT: f64 = 2.0;
+
+#[derive(Clone, Copy)]
+enum SpriteEdgeType {
+    Inner,
+    Outer,
+}
+
+/// Classifies the four edges of a cell (top, right, bottom, left). Outer = edge of the sheet; Inner = boundary with another cell.
+fn hero_sprite_edge_types(col: u32, row: u32, cols: u32, rows: u32) -> (SpriteEdgeType, SpriteEdgeType, SpriteEdgeType, SpriteEdgeType) {
+    let top = if row == 0 {
+        SpriteEdgeType::Outer
+    } else {
+        SpriteEdgeType::Inner
+    };
+    let right = if col + 1 >= cols {
+        SpriteEdgeType::Outer
+    } else {
+        SpriteEdgeType::Inner
+    };
+    let bottom = if row + 1 >= rows {
+        SpriteEdgeType::Outer
+    } else {
+        SpriteEdgeType::Inner
+    };
+    let left = if col == 0 {
+        SpriteEdgeType::Outer
+    } else {
+        SpriteEdgeType::Inner
+    };
+    (top, right, bottom, left)
+}
+
+/// Source rect in percent (0–100): (start_x, start_y, width, height). Uses edge types to apply inner vs outer trim per edge.
+fn hero_sprite_cell_rect(col: u32, row: u32, cols: u32, rows: u32) -> (f64, f64, f64, f64) {
+    let (top, right, bottom, left) = hero_sprite_edge_types(col, row, cols, rows);
+    let trim = |edge: SpriteEdgeType, is_width: bool| -> f64 {
+        let (inner, outer) = if is_width {
+            (HERO_SPRITE_TRIM_AT_WIDTH_BOUNDARY, HERO_SPRITE_TRIM_AT_OUTER_WIDTH)
+        } else {
+            (HERO_SPRITE_TRIM_AT_HEIGHT_BOUNDARY, HERO_SPRITE_TRIM_AT_OUTER_HEIGHT)
+        };
+        match edge {
+            SpriteEdgeType::Inner => inner,
+            SpriteEdgeType::Outer => outer,
+        }
+    };
+    let left_trim = trim(left, true);
+    let right_trim = trim(right, true);
+    let top_trim = trim(top, false);
+    let bottom_trim = trim(bottom, false);
+
+    let cell_w_pct = 100.0 / f64::from(cols);
+    let cell_h_pct = 100.0 / f64::from(rows);
+    let start_x = f64::from(col) * cell_w_pct + left_trim;
+    let start_y = f64::from(row) * cell_h_pct + top_trim;
+    let width = cell_w_pct - left_trim - right_trim;
+    let height = cell_h_pct - top_trim - bottom_trim;
+    (start_x, start_y, width, height)
+}
 
 fn default_state_path() -> PathBuf {
     std::env::var_os("PPP_DATA")
@@ -98,8 +174,7 @@ fn base_layout(title: &str, content: &str) -> String {
 <footer class="site-footer">Pokémon TCG Pack Picker – Build booster packs from your collection. Not affiliated with The Pokémon Company.</footer>
 </body>
 </html>"#,
-        title,
-        content
+        title, content
     )
 }
 
@@ -117,12 +192,37 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
             "No"
         }
     );
+    // Sprite sheet (474×753). Grid and trim in HERO_SPRITE_* constants. Fixed-size layout so pack always visible.
+    const SPRITE_W: u32 = 474;
+    const SPRITE_H: u32 = 753;
+    let pack_h_to_w_ratio = f64::from(SPRITE_H) / f64::from(SPRITE_W);
+    let pack_display_w = 200.0_f64; // larger so pack reaches ~bottom of button
+    let pack_display_h = pack_display_w * pack_h_to_w_ratio;
+    let cols = HERO_SPRITE_GRID_COLS;
+    let rows = HERO_SPRITE_GRID_ROWS;
+    let img_w = pack_display_w * f64::from(cols);
+    let img_h = pack_display_h * f64::from(rows);
+
+    let col = rand::random::<u32>() % cols;
+    let row = rand::random::<u32>() % rows;
+    let (start_x_pct, start_y_pct, width_pct, height_pct) =
+        hero_sprite_cell_rect(col, row, cols, rows);
+    let pack_visible_w = img_w * width_pct / 100.0;
+    let pack_visible_h = img_h * height_pct / 100.0;
+    let img_left_px = -img_w * start_x_pct / 100.0;
+    let img_top_px = -img_h * start_y_pct / 100.0;
+    let (wrapper_w, wrapper_h, img_width, img_height) = (
+        format!("{:.4}px", pack_visible_w),
+        format!("{:.4}px", pack_visible_h),
+        format!("{:.4}px", img_w),
+        format!("{:.4}px", img_h),
+    );
     let content = format!(
-        r#"<h1 class="page-title">Open a Booster Pack</h1>
-<p class="page-subtitle">Build packs from your collection with official-style odds. Fill each slot in order using the A/B halving instructions.</p>
-<div class="hero">
-<div class="hero-visual"><img src="/static/images/booster-pack.svg" alt="Booster pack"></div>
+        r#"<div class="hero">
+<div class="hero-visual hero-booster-sprite" role="img" aria-label="Booster pack" style="width: {}; height: {};"><img src="/static/images/booster-sheet.webp" alt="" style="position: absolute; width: {}; height: {}; left: {:.2}px; top: {:.2}px;"></div>
 <div class="hero-content">
+<h1 class="page-title">Open a Booster Pack</h1>
+<p class="page-subtitle">Build packs from your collection with official-style odds. Fill each slot in order using the A/B halving instructions.</p>
 <p>Generate one 5-card pack drawn from your piles. You'll get step-by-step instructions for each card so you can pull them blind in the correct order.</p>
 <form action="/pack" method="post"><button type="submit" class="btn-primary">Open a Pack</button></form>
 </div>
@@ -135,6 +235,12 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
 </ul>
 <p class="settings-summary">Current: {}.</p>
 </div>"#,
+        wrapper_w,
+        wrapper_h,
+        img_width,
+        img_height,
+        img_left_px,
+        img_top_px,
         settings_line
     );
     Html(base_layout("Home", &content))
