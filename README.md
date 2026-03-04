@@ -19,7 +19,13 @@ cargo run
 
 Then open **http://127.0.0.1:3000**. The UI uses Pokémon TCG–inspired styling (colors, card-style panels, booster pack imagery). Static files are served from the `static/` directory.
 
-Data is stored in `./data/state.json` by default. Override with env:
+Data is stored under `./data/` by default:
+
+- **`state.json`** — piles and settings.
+- **`packs.json`** — list of opened pack IDs and dates.
+- **`packs/<id>.json`** — one file per opened pack (notes, slots, and editable card name/notes per slot).
+
+Override the state file path with env (the pack files use the same directory as the state file):
 
 ```bash
 PPP_DATA=/path/to/state.json cargo run
@@ -27,15 +33,17 @@ PPP_DATA=/path/to/state.json cargo run
 
 ## Screenshots
 
-**My Piles** — Manage your card piles: add, edit, delete, combine two piles, or split a pile. Table shows pile name, type, estimated count, and actions.
+**Piles** — Manage your card piles: add, edit, delete, combine two piles, or split a pile. Table shows pile name, type, estimated count, and actions.
 
-![My Piles](/static/images/my-piles.png)
+![Piles](/static/images/my-piles.png)
+
+**Packs** — List of opened packs. Open a pack to add it; then edit pack notes (e.g. who pulled it) and, per slot, the card name and notes for what was pulled.
 
 **Settings** — Pack format and energy options (cards per pack, pack type, add energy to packs, energy types to exclude). Changes apply to the next pack you open.
 
 ![Settings](/static/images/settings.png)
 
-**Your Booster Pack** — After opening a pack, you get slot-by-slot instructions: which pile to use and the A/B halving sequence plus final number. Fill each slot in order so the physical pack matches the intended order. A trainer tip appears if any pile is below 40 cards.
+**Your Booster Pack** — After opening a pack, you get slot-by-slot instructions: which pile to use and the A/B halving sequence plus final number. Fill each slot in order so the physical pack matches the intended order. A trainer tip appears if any pile is below 40 cards. Each opened pack is saved; use the **Packs** tab to review and edit notes (e.g. who pulled) and what card was in each slot.
 
 ![Your Booster Pack](/static/images/your-booster-pack.png)
 

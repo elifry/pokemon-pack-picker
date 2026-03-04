@@ -6,6 +6,7 @@ mod pack_gen;
 mod selection;
 mod state;
 
+use axum::http::{StatusCode, header::LOCATION};
 use axum::{
     Form, Router,
     extract::{Path, State},
@@ -14,7 +15,10 @@ use axum::{
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use state::{AppState, SharedState, load_state, save_state};
+use state::{
+    AppState, SharedState, load_pack_record, load_packs_list, load_state, save_pack_record,
+    save_packs_list, save_state,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -46,7 +50,17 @@ enum SpriteEdgeType {
 }
 
 /// Classifies the four edges of a cell (top, right, bottom, left). Outer = edge of the sheet; Inner = boundary with another cell.
-fn hero_sprite_edge_types(col: u32, row: u32, cols: u32, rows: u32) -> (SpriteEdgeType, SpriteEdgeType, SpriteEdgeType, SpriteEdgeType) {
+fn hero_sprite_edge_types(
+    col: u32,
+    row: u32,
+    cols: u32,
+    rows: u32,
+) -> (
+    SpriteEdgeType,
+    SpriteEdgeType,
+    SpriteEdgeType,
+    SpriteEdgeType,
+) {
     let top = if row == 0 {
         SpriteEdgeType::Outer
     } else {
@@ -75,9 +89,15 @@ fn hero_sprite_cell_rect(col: u32, row: u32, cols: u32, rows: u32) -> (f64, f64,
     let (top, right, bottom, left) = hero_sprite_edge_types(col, row, cols, rows);
     let trim = |edge: SpriteEdgeType, is_width: bool| -> f64 {
         let (inner, outer) = if is_width {
-            (HERO_SPRITE_TRIM_AT_WIDTH_BOUNDARY, HERO_SPRITE_TRIM_AT_OUTER_WIDTH)
+            (
+                HERO_SPRITE_TRIM_AT_WIDTH_BOUNDARY,
+                HERO_SPRITE_TRIM_AT_OUTER_WIDTH,
+            )
         } else {
-            (HERO_SPRITE_TRIM_AT_HEIGHT_BOUNDARY, HERO_SPRITE_TRIM_AT_OUTER_HEIGHT)
+            (
+                HERO_SPRITE_TRIM_AT_HEIGHT_BOUNDARY,
+                HERO_SPRITE_TRIM_AT_OUTER_HEIGHT,
+            )
         };
         match edge {
             SpriteEdgeType::Inner => inner,
@@ -104,6 +124,87 @@ fn default_state_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("./data/state.json"))
 }
 
+/// Load state from path; if state file contains legacy `pack_history`, migrate to packs.json + packs/<id>.json and rewrite state without it.
+fn load_state_and_migrate_packs(path: &std::path::Path) -> (state::PersistedState, ()) {
+    if !path.exists() {
+        return (
+            load_state(path).unwrap_or_else(|_| {
+                info!("No state file at {:?}, using default", path);
+                state::PersistedState::default()
+            }),
+            (),
+        );
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("Could not read state file: {}", e);
+            return (state::PersistedState::default(), ());
+        }
+    };
+    let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Invalid state JSON: {}", e);
+            return (
+                load_state(path).unwrap_or_else(|_| state::PersistedState::default()),
+                (),
+            );
+        }
+    };
+
+    let data_dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let mut did_migrate = false;
+    if let Some(history) = value.get("pack_history").and_then(|v| v.as_array()) {
+        let mut list = load_packs_list(data_dir).unwrap_or_default();
+        for pack_val in history {
+            if let Some(record) =
+                serde_json::from_value::<models::PackRecord>(pack_val.clone()).ok()
+            {
+                if save_pack_record(data_dir, &record).is_ok() {
+                    list.push(models::PackListEntry {
+                        id: record.id,
+                        created_at: record.created_at.clone(),
+                        title: if record.title.is_empty() {
+                            None
+                        } else {
+                            Some(record.title.clone())
+                        },
+                        notes: if record.notes.is_empty() {
+                            None
+                        } else {
+                            Some(record.notes.clone())
+                        },
+                        card_summary: card_summary_from_slots(&record.slots),
+                    });
+                }
+            }
+        }
+        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        if save_packs_list(data_dir, &list).is_ok() {
+            info!(
+                "Migrated {} packs from state to packs.json + packs/",
+                list.len()
+            );
+            did_migrate = true;
+        }
+        value.as_object_mut().and_then(|o| o.remove("pack_history"));
+    }
+
+    match serde_json::from_value::<state::PersistedState>(value) {
+        Ok(s) => {
+            if did_migrate {
+                let _ = save_state(path, &s);
+            }
+            (s, ())
+        }
+        Err(e) => {
+            tracing::warn!("State JSON missing required fields: {}", e);
+            (state::PersistedState::default(), ())
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
@@ -113,14 +214,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     let path = default_state_path();
-    let data = load_state(&path).unwrap_or_else(|_| {
-        info!("No state file at {:?}, using default", path);
-        state::PersistedState::default()
-    });
-    let app_state: SharedState = Arc::new(RwLock::new(AppState {
-        data,
-        path: path.clone(),
-    }));
+    let (data, _) = load_state_and_migrate_packs(&path);
+    let mut app = AppState::new(path.clone());
+    app.data = data;
+    let app_state: SharedState = Arc::new(RwLock::new(app));
 
     let app = Router::new()
         .nest_service("/static", ServeDir::new("static"))
@@ -133,6 +230,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/piles/:id/edit", get(edit_pile_form).post(update_pile))
         .route("/piles/:id/delete", post(delete_pile))
         .route("/settings", get(settings_form).post(update_settings))
+        .route("/packs", get(packs_index))
+        .route("/packs/:id", get(pack_detail_form).post(update_pack))
         .with_state(app_state);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -143,7 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 async fn save(state: &SharedState) -> Result<(), std::io::Error> {
     let guard = state.read().await;
-    save_state(&guard.path, &guard.data)
+    save_state(&guard.path, guard.data())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
 }
 
@@ -164,7 +263,8 @@ fn base_layout(title: &str, content: &str) -> String {
 <a href="/" class="site-logo"><img src="/static/images/logo.svg" alt=""> Pokémon TCG Pack Picker</a>
 <nav class="site-nav">
 <a href="/">Home</a>
-<a href="/piles">My Piles</a>
+<a href="/piles">Piles</a>
+<a href="/packs">Packs</a>
 <a href="/settings">Settings</a>
 </nav>
 </header>
@@ -180,18 +280,47 @@ fn base_layout(title: &str, content: &str) -> String {
 
 // --------------- Home ---------------
 
+const HOME_LATEST_PACKS: usize = 8;
+
 async fn index(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
     let settings_line = format!(
         "{} · {} cards per pack · Energy in packs: {}",
-        guard.data.settings.pack_type.label(),
-        guard.data.settings.pack_size,
-        if guard.data.settings.add_energy_to_packs {
+        guard.settings().pack_type.label(),
+        guard.settings().pack_size,
+        if guard.settings().add_energy_to_packs {
             "Yes"
         } else {
             "No"
         }
     );
+    let list = load_packs_list(&guard.data_dir).unwrap_or_default();
+    let latest: Vec<_> = list.iter().take(HOME_LATEST_PACKS).collect();
+    let latest_packs_html: String = if latest.is_empty() {
+        r#"<p class="home-latest-empty">No packs yet. <a href="/">Open a pack</a> to get started.</p>"#.to_string()
+    } else {
+        latest
+            .iter()
+            .map(|e| {
+                let title = e.title.as_deref().unwrap_or("(no title)");
+                let notes = e.notes.as_deref().unwrap_or("");
+                let mut block = format!(r#"<a href="/packs/{}" class="home-latest-pack">"#, e.id);
+                block.push_str(&format!(
+                    r#"<span class="home-latest-title">{}</span>"#,
+                    html_escape(title)
+                ));
+                if !notes.is_empty() {
+                    block.push_str(&format!(
+                        r#"<span class="home-latest-notes">{}</span>"#,
+                        html_escape(notes)
+                    ));
+                }
+                block.push_str("</a>");
+                block
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     // Sprite sheet (474×753). Grid and trim in HERO_SPRITE_* constants. Fixed-size layout so pack always visible.
     const SPRITE_W: u32 = 474;
     const SPRITE_H: u32 = 753;
@@ -227,13 +356,20 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
 <form action="/pack" method="post"><button type="submit" class="btn-primary">Open a Pack</button></form>
 </div>
 </div>
-<div class="card-panel">
+<div class="card-panel home-two-col">
+<div class="home-latest-packs">
+<h2>Latest packs</h2>
+<div class="home-latest-list">{}</div>
+</div>
+<div class="home-quick-links">
 <h2>Quick links</h2>
 <ul class="quick-links">
-<li><a href="/piles">Manage my piles</a> – Add, edit, combine, or split your card piles</li>
+<li><a href="/piles">Manage piles</a> – Add, edit, combine, or split your card piles</li>
+<li><a href="/packs">Packs</a> – View and edit opened packs, notes, and what card was in each slot</li>
 <li><a href="/settings">Settings</a> – Pack type, pack size, energy, energy types to exclude</li>
 </ul>
 <p class="settings-summary">Current: {}.</p>
+</div>
 </div>"#,
         wrapper_w,
         wrapper_h,
@@ -241,6 +377,7 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
         img_height,
         img_left_px,
         img_top_px,
+        latest_packs_html,
         settings_line
     );
     Html(base_layout("Home", &content))
@@ -251,14 +388,52 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
 async fn generate_pack(State(state): State<SharedState>) -> impl IntoResponse {
     let mut guard = state.write().await;
     let mut rng = StdRng::from_entropy();
-    match pack_gen::generate_pack(&mut guard.data, &mut rng) {
+    match pack_gen::generate_pack(guard.data_mut(), &mut rng) {
         Ok(result) => {
+            let data_dir = guard.data_dir.clone();
             drop(guard);
             if let Err(e) = save(&state).await {
                 tracing::error!("Failed to save state: {}", e);
             }
-            // Render result directly
-            let body = render_pack_result(&result);
+            let pack_id = Uuid::new_v4();
+            let created_at = chrono::Utc::now().to_rfc3339();
+            let record = models::PackRecord {
+                id: pack_id,
+                created_at: created_at.clone(),
+                title: String::new(),
+                notes: String::new(),
+                slots: result
+                    .slots
+                    .iter()
+                    .map(|s| models::SavedPackSlot {
+                        slot_number: s.slot_number,
+                        slot_role: s.slot_role.clone(),
+                        pile_name: s.pile_name.clone(),
+                        instruction_display: s.instruction.display_string(),
+                        card_name: None,
+                        card_notes: None,
+                        recognized_card_id: None,
+                        card_holo: None,
+                        card_image_url: None,
+                    })
+                    .collect(),
+                warning: result.warning.clone(),
+            };
+            if save_pack_record(&data_dir, &record).is_ok() {
+                let mut list = load_packs_list(&data_dir).unwrap_or_default();
+                list.insert(
+                    0,
+                    models::PackListEntry {
+                        id: pack_id,
+                        created_at,
+                        title: None,
+                        notes: None,
+                        card_summary: None,
+                    },
+                );
+                let _ = save_packs_list(&data_dir, &list);
+            }
+            let body = render_pack_result(&result, Some(pack_id));
             Html(body).into_response()
         }
         Err(e) => {
@@ -275,6 +450,21 @@ async fn generate_pack(State(state): State<SharedState>) -> impl IntoResponse {
     }
 }
 
+/// Build a single-line summary of card names from pack slots, joined by middle dot (·).
+fn card_summary_from_slots(slots: &[models::SavedPackSlot]) -> Option<String> {
+    const SEP: &str = " · ";
+    let names: Vec<&str> = slots
+        .iter()
+        .filter_map(|s| s.card_name.as_deref())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if names.is_empty() {
+        None
+    } else {
+        Some(names.join(SEP))
+    }
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -282,7 +472,38 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn render_pack_result(result: &pack_gen::PackResult) -> String {
+/// Format an ISO 8601 / RFC 3339 timestamp as human-readable, e.g. "Monday, July 15, 3:24 PM".
+fn format_pack_date(created_at: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .map(|dt| {
+            let s = dt.format("%A, %B %e, %l:%M %p").to_string();
+            s.trim().replace("  ", " ").trim().to_string()
+        })
+        .unwrap_or_else(|_| created_at.to_string())
+}
+
+/// Format stored RFC3339 for use in <input type="datetime-local"> (YYYY-MM-DDTHH:mm).
+fn created_at_to_datetime_local_value(created_at: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M").to_string())
+        .unwrap_or_else(|_| String::new())
+}
+
+/// Parse value from datetime-local input (YYYY-MM-DDTHH:mm) and return RFC3339 (UTC, zero seconds).
+fn parse_datetime_local_to_rfc3339(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M")
+        .ok()
+        .map(|naive| {
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+                .to_rfc3339()
+        })
+}
+
+fn render_pack_result(result: &pack_gen::PackResult, pack_id: Option<Uuid>) -> String {
     let slot_cards: String = result
         .slots
         .iter()
@@ -313,9 +534,16 @@ fn render_pack_result(result: &pack_gen::PackResult) -> String {
 {}
 <div class="slot-cards">{}</div>
 <div class="card-panel">
-<p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">My piles</a></p>
+<p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">Piles</a>{} &nbsp; <a href="/settings" class="btn-secondary">Settings</a></p>
 </div>"#,
-        warning, slot_cards
+        warning,
+        slot_cards,
+        pack_id
+            .map(|id| format!(
+                " &nbsp; <a href=\"/packs/{}\" class=\"btn-secondary\">View / edit this pack</a>",
+                id
+            ))
+            .unwrap_or_default()
     );
     base_layout("Your pack", &content)
 }
@@ -329,8 +557,7 @@ async fn pack_result_placeholder() -> impl IntoResponse {
 async fn piles_index(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
     let piles: String = guard
-        .data
-        .piles
+        .piles()
         .iter()
         .map(|p| {
             let typ = pile_type_label(&p.pile_type);
@@ -346,7 +573,7 @@ async fn piles_index(State(state): State<SharedState>) -> impl IntoResponse {
         .collect::<Vec<_>>()
         .join("\n");
     let content = format!(
-        r#"<h1 class="page-title">My Piles</h1>
+        r#"<h1 class="page-title">Piles</h1>
 <p class="page-subtitle">Manage your card piles. Combine or split piles when you refill or reorganize.</p>
 <p><a href="/piles/combine" class="btn-secondary">Combine two piles</a> &nbsp; <a href="/piles/split" class="btn-secondary">Split a pile</a></p>
 <div class="card-panel">
@@ -375,7 +602,7 @@ async fn piles_index(State(state): State<SharedState>) -> impl IntoResponse {
 </div>"#,
         piles
     );
-    Html(base_layout("My Piles", &content))
+    Html(base_layout("Piles", &content))
 }
 
 fn pile_type_label(t: &models::PileType) -> String {
@@ -432,7 +659,7 @@ async fn create_pile(
     let pile = models::Pile::new(f.name.trim().to_string(), pile_type, f.estimated_count);
     {
         let mut guard = state.write().await;
-        guard.data.piles.push(pile);
+        guard.piles_mut().push(pile);
     }
     if save(&state).await.is_err() {
         tracing::error!("Failed to save state");
@@ -445,7 +672,7 @@ async fn edit_pile_form(
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
     let guard = state.read().await;
-    let pile = match guard.data.piles.iter().find(|p| p.id == id) {
+    let pile = match guard.pile_by_id(id) {
         Some(p) => p,
         None => return Html("Pile not found".to_string()).into_response(),
     };
@@ -467,14 +694,28 @@ async fn edit_pile_form(
     let content = format!(
         r#"<h1 class="page-title">Edit pile</h1>
 <div class="card-panel">
-<form method="post" action="/piles/{}/edit">
+<form id="pile-edit-form" method="post" action="/piles/{}/edit">
 <div class="form-group"><label>Pile name</label><input type="text" name="name" value="{}" required></div>
 <div class="form-group"><label>Estimated count</label><input type="number" name="estimated_count" value="{}" min="0"></div>
 <div class="form-group"><label>Energy type (if Energy)</label><input type="text" name="energy_type" value="{}"></div>
 <div class="form-row"><div class="form-group"><label>Price min $</label><input type="text" name="price_min" value="{}"></div><div class="form-group"><label>Price max $</label><input type="text" name="price_max" value="{}"></div></div>
-<button type="submit" class="btn-primary">Save</button> <a href="/piles" class="btn-secondary">Back to piles</a>
+<button type="submit" class="btn-primary">Back to piles</button>
 </form>
-</div>"#,
+</div>
+<script>
+(function() {{
+  var form = document.getElementById('pile-edit-form');
+  if (!form) return;
+  function save() {{
+    var fd = new FormData(form);
+    fetch(form.action, {{ method: 'POST', body: fd, headers: {{ 'X-Requested-With': 'XMLHttpRequest' }} }});
+  }}
+  [].slice.call(form.querySelectorAll('input, textarea')).forEach(function(el) {{
+    el.addEventListener('blur', save);
+    el.addEventListener('change', save);
+  }});
+}})();
+</script>"#,
         id,
         html_escape(&pile.name),
         pile.estimated_count,
@@ -497,12 +738,13 @@ struct UpdatePileForm {
 async fn update_pile(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
     Form(f): Form<UpdatePileForm>,
 ) -> impl IntoResponse {
     let mut guard = state.write().await;
-    let pile = match guard.data.piles.iter_mut().find(|p| p.id == id) {
+    let pile = match guard.pile_by_id_mut(id) {
         Some(p) => p,
-        None => return Redirect::to("/piles"),
+        None => return (StatusCode::FOUND, [(LOCATION, "/piles".to_string())], ()).into_response(),
     };
     pile.name = f.name.trim().to_string();
     pile.estimated_count = f.estimated_count;
@@ -526,12 +768,20 @@ async fn update_pile(
     if save(&state).await.is_err() {
         tracing::error!("Failed to save state");
     }
-    Redirect::to("/piles")
+    let is_ajax = headers
+        .get("X-Requested-With")
+        .and_then(|v| v.to_str().ok())
+        == Some("XMLHttpRequest");
+    if is_ajax {
+        (StatusCode::NO_CONTENT, ()).into_response()
+    } else {
+        (StatusCode::FOUND, [(LOCATION, "/piles".to_string())], ()).into_response()
+    }
 }
 
 async fn delete_pile(State(state): State<SharedState>, Path(id): Path<Uuid>) -> impl IntoResponse {
     let mut guard = state.write().await;
-    guard.data.piles.retain(|p| p.id != id);
+    guard.piles_mut().retain(|p| p.id != id);
     drop(guard);
     if save(&state).await.is_err() {
         tracing::error!("Failed to save state");
@@ -544,8 +794,7 @@ async fn delete_pile(State(state): State<SharedState>, Path(id): Path<Uuid>) -> 
 async fn combine_form(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
     let options: String = guard
-        .data
-        .piles
+        .piles()
         .iter()
         .map(|p| {
             format!(
@@ -587,18 +836,8 @@ async fn do_combine(
 ) -> impl IntoResponse {
     let mut guard = state.write().await;
     let (count_a, count_b) = {
-        let a = guard
-            .data
-            .piles
-            .iter()
-            .find(|p| p.id == f.id_a)
-            .map(|p| p.estimated_count);
-        let b = guard
-            .data
-            .piles
-            .iter()
-            .find(|p| p.id == f.id_b)
-            .map(|p| p.estimated_count);
+        let a = guard.pile_by_id(f.id_a).map(|p| p.estimated_count);
+        let b = guard.pile_by_id(f.id_b).map(|p| p.estimated_count);
         (a.unwrap_or(0), b.unwrap_or(0))
     };
     let new_count = if f.estimated_count > 0 {
@@ -607,17 +846,13 @@ async fn do_combine(
         count_a + count_b
     };
     let typ = guard
-        .data
-        .piles
-        .iter()
-        .find(|p| p.id == f.id_a)
+        .pile_by_id(f.id_a)
         .map(|p| p.pile_type.clone())
         .unwrap_or(models::PileType::Bulk);
     guard
-        .data
-        .piles
+        .piles_mut()
         .retain(|p| p.id != f.id_a && p.id != f.id_b);
-    guard.data.piles.push(models::Pile::new(
+    guard.piles_mut().push(models::Pile::new(
         f.new_name.trim().to_string(),
         typ,
         new_count,
@@ -634,8 +869,7 @@ async fn do_combine(
 async fn split_form(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
     let options: String = guard
-        .data
-        .piles
+        .piles()
         .iter()
         .filter(|p| p.estimated_count > 0)
         .map(|p| {
@@ -673,7 +907,7 @@ struct SplitForm {
 
 async fn do_split(State(state): State<SharedState>, Form(f): Form<SplitForm>) -> impl IntoResponse {
     let mut guard = state.write().await;
-    let source = match guard.data.piles.iter_mut().find(|p| p.id == f.source_id) {
+    let source = match guard.pile_by_id_mut(f.source_id) {
         Some(p) => p,
         None => return Redirect::to("/piles"),
     };
@@ -683,7 +917,7 @@ async fn do_split(State(state): State<SharedState>, Form(f): Form<SplitForm>) ->
     }
     let typ = source.pile_type.clone();
     source.estimated_count = source.estimated_count.saturating_sub(split_count);
-    guard.data.piles.push(models::Pile::new(
+    guard.piles_mut().push(models::Pile::new(
         f.new_name.trim().to_string(),
         typ,
         split_count,
@@ -695,11 +929,225 @@ async fn do_split(State(state): State<SharedState>, Form(f): Form<SplitForm>) ->
     Redirect::to("/piles")
 }
 
+// --------------- Packs ---------------
+
+async fn packs_index(State(state): State<SharedState>) -> impl IntoResponse {
+    let guard = state.read().await;
+    let list = load_packs_list(&guard.data_dir).unwrap_or_default();
+    let rows: String = list
+        .iter()
+        .map(|e| {
+            let title = e.title.as_deref().unwrap_or("");
+            let notes = e.notes.as_deref().unwrap_or("");
+            let cards = e.card_summary.as_deref().unwrap_or("");
+            let mut title_cell = if title.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<div>{}</div>"#, html_escape(title))
+            };
+            if !notes.is_empty() {
+                title_cell.push_str(&format!(
+                    r#"<div class="pack-list-notes">{}</div>"#,
+                    html_escape(notes)
+                ));
+            }
+            if !cards.is_empty() {
+                title_cell.push_str(&format!(
+                    r#"<div class="pack-list-cards">{}</div>"#,
+                    html_escape(cards)
+                ));
+            }
+            format!(
+                r#"<tr><td><a href="/packs/{}">View / edit</a></td><td>{}</td><td>{}</td></tr>"#,
+                e.id,
+                title_cell,
+                html_escape(&format_pack_date(&e.created_at))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content = format!(
+        r#"<h1 class="page-title">Packs</h1>
+<p class="page-subtitle">Opened packs. Open a pack from <a href="/">Home</a>; then you can edit title, notes, and what card was pulled per slot.</p>
+<div class="card-panel">
+<table class="data-table"><thead><tr><th></th><th>Title</th><th>Opened</th></tr></thead><tbody>
+{}
+</tbody></table>
+</div>
+<div class="btn-row-equal"><a href="/" class="btn-primary">Open a pack</a><a href="/piles" class="btn-secondary">Piles</a></div>"#,
+        if rows.is_empty() {
+            r#"<tr><td colspan="3">No packs yet. <a href="/">Open a pack</a> to get started.</td></tr>"#.to_string()
+        } else {
+            rows
+        }
+    );
+    Html(base_layout("Packs", &content))
+}
+
+async fn pack_detail_form(
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let guard = state.read().await;
+    let record = match load_pack_record(&guard.data_dir, id) {
+        Ok(r) => r,
+        Err(_) => return Html(base_layout("Not found", "<p>Pack not found.</p>")).into_response(),
+    };
+    let title_esc = html_escape(&record.title);
+    let notes_esc = html_escape(&record.notes);
+    let warning_block = record
+        .warning
+        .as_ref()
+        .map(|w| {
+            format!(
+                r#"<div class="alert-warning"><strong>Tip:</strong> {}</div>"#,
+                html_escape(w)
+            )
+        })
+        .unwrap_or_default();
+    let slot_rows: String = record
+        .slots
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let card_name = s.card_name.as_deref().unwrap_or("").to_string();
+            let card_notes = s.card_notes.as_deref().unwrap_or("").to_string();
+            format!(
+                r#"<tr><td>Slot {} · {}</td><td>{}</td><td><input type="text" name="slot_{}_card_name" value="{}" placeholder="Card name"></td><td><input type="text" name="slot_{}_card_notes" value="{}" placeholder="Notes"></td></tr>
+<tr><td colspan="2"></td><td colspan="2"><span class="muted">Pile: {} · {}</span></td></tr>"#,
+                s.slot_number,
+                html_escape(&s.slot_role),
+                html_escape(&s.instruction_display),
+                i,
+                html_escape(&card_name),
+                i,
+                html_escape(&card_notes),
+                html_escape(&s.pile_name),
+                html_escape(&s.instruction_display)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content = format!(
+        r#"<h1 class="page-title">Pack</h1>
+<p class="page-subtitle">Opened {}. Edit title, notes, and what was pulled per slot.</p>
+{}
+<div class="card-panel">
+<form id="pack-edit-form" method="post" action="/packs/{}">
+<div class="form-group"><label>Title</label><input type="text" name="title" value="{}" placeholder="e.g. Friday night pull"></div>
+<div class="form-group"><label>Date opened</label><input type="datetime-local" name="created_at" value="{}"></div>
+<div class="form-group"><label>Notes (e.g. who pulled this pack)</label><textarea name="notes" rows="2" placeholder="e.g. Who pulled, where, etc.">{}</textarea></div>
+<table class="data-table"><thead><tr><th>Slot</th><th>Instruction</th><th>Card name</th><th>Card notes</th></tr></thead><tbody>
+{}
+</tbody></table>
+<button type="submit" class="btn-primary">Back to packs</button>
+</form>
+<script>
+(function() {{
+  var form = document.getElementById('pack-edit-form');
+  if (!form) return;
+  function save() {{
+    var fd = new FormData(form);
+    fetch(form.action, {{ method: 'POST', body: fd, headers: {{ 'X-Requested-With': 'XMLHttpRequest' }} }});
+  }}
+  [].slice.call(form.querySelectorAll('input, textarea')).forEach(function(el) {{
+    el.addEventListener('blur', save);
+    el.addEventListener('change', save);
+  }});
+}})();
+</script>
+</div>"#,
+        html_escape(&format_pack_date(&record.created_at)),
+        warning_block,
+        id,
+        title_esc,
+        html_escape(&created_at_to_datetime_local_value(&record.created_at)),
+        notes_esc,
+        slot_rows
+    );
+    Html(base_layout("Edit pack", &content)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct UpdatePackForm {
+    title: Option<String>,
+    created_at: Option<String>,
+    notes: Option<String>,
+    #[serde(flatten)]
+    slots: std::collections::HashMap<String, String>,
+}
+
+async fn update_pack(
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Form(f): Form<UpdatePackForm>,
+) -> impl IntoResponse {
+    let guard = state.read().await;
+    let mut record = match load_pack_record(&guard.data_dir, id) {
+        Ok(r) => r,
+        Err(_) => {
+            return (StatusCode::FOUND, [(LOCATION, "/packs".to_string())], ()).into_response();
+        }
+    };
+    record.title = f.title.unwrap_or_default().trim().to_string();
+    if let Some(ref s) = f.created_at {
+        if let Some(rfc3339) = parse_datetime_local_to_rfc3339(s) {
+            record.created_at = rfc3339;
+        }
+    }
+    record.notes = f.notes.unwrap_or_default().trim().to_string();
+    for (i, slot) in record.slots.iter_mut().enumerate() {
+        let name_key = format!("slot_{}_card_name", i);
+        let notes_key = format!("slot_{}_card_notes", i);
+        if let Some(v) = f.slots.get(&name_key) {
+            let s = v.trim().to_string();
+            slot.card_name = if s.is_empty() { None } else { Some(s) };
+        }
+        if let Some(v) = f.slots.get(&notes_key) {
+            let s = v.trim().to_string();
+            slot.card_notes = if s.is_empty() { None } else { Some(s) };
+        }
+    }
+    let data_dir = guard.data_dir.clone();
+    drop(guard);
+    if save_pack_record(&data_dir, &record).is_err() {
+        tracing::error!("Failed to save pack record");
+    }
+    if let Ok(mut list) = load_packs_list(&data_dir) {
+        if let Some(entry) = list.iter_mut().find(|e| e.id == id) {
+            entry.title = if record.title.is_empty() {
+                None
+            } else {
+                Some(record.title.clone())
+            };
+            entry.notes = if record.notes.is_empty() {
+                None
+            } else {
+                Some(record.notes.clone())
+            };
+            entry.card_summary = card_summary_from_slots(&record.slots);
+            entry.created_at = record.created_at.clone();
+        }
+        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        let _ = save_packs_list(&data_dir, &list);
+    }
+    let is_ajax = headers
+        .get("X-Requested-With")
+        .and_then(|v| v.to_str().ok())
+        == Some("XMLHttpRequest");
+    if is_ajax {
+        (StatusCode::NO_CONTENT, ()).into_response()
+    } else {
+        (StatusCode::FOUND, [(LOCATION, "/packs".to_string())], ()).into_response()
+    }
+}
+
 // --------------- Settings ---------------
 
 async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
-    let s = &guard.data.settings;
+    let s = guard.settings();
     let pack_type_options = [
         (
             models::PackTypeId::Modern,
@@ -721,10 +1169,12 @@ async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
             models::PackTypeId::Classic => "classic",
             models::PackTypeId::Legacy => "legacy",
         };
+        let disabled = if id.is_implemented() { "" } else { " disabled" };
         let opt = format!(
-            r#"<option value="{}" {}>{}</option>"#,
+            r#"<option value="{}" {}{}>{}</option>"#,
             val,
             if *sel { "selected" } else { "" },
+            disabled,
             id.label()
         );
         opt
@@ -765,19 +1215,20 @@ async fn update_settings(
     Form(f): Form<SettingsForm>,
 ) -> impl IntoResponse {
     let mut guard = state.write().await;
+    let settings = guard.settings_mut();
     if let Some(n) = f.pack_size {
-        guard.data.settings.pack_size = n.clamp(1, 20);
+        settings.pack_size = n.clamp(1, 20);
     }
     if let Some(t) = &f.pack_type {
-        guard.data.settings.pack_type = match t.as_str() {
+        settings.pack_type = match t.as_str() {
             "classic" => models::PackTypeId::Classic,
             "legacy" => models::PackTypeId::Legacy,
             _ => models::PackTypeId::Modern,
         };
     }
-    guard.data.settings.add_energy_to_packs = f.add_energy.as_deref() == Some("1");
+    settings.add_energy_to_packs = f.add_energy.as_deref() == Some("1");
     if let Some(s) = &f.energy_types_out {
-        guard.data.settings.energy_types_out = s
+        settings.energy_types_out = s
             .split(',')
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())

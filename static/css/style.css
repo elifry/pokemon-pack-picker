@@ -118,6 +118,83 @@ body {
   border-bottom: 2px solid var(--pkmn-yellow);
 }
 
+.pack-list-notes {
+  font-size: 0.875rem;
+  color: var(--pkmn-blue-dark);
+  margin-top: 0.2rem;
+}
+
+.pack-list-cards {
+  font-size: 0.75rem;
+  color: var(--pkmn-blue-dark);
+  margin-top: 0.25rem;
+  opacity: 0.9;
+}
+
+/* Home: two-column layout (latest packs | quick links) */
+.home-two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
+  gap: 2rem;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .home-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.home-latest-packs h2,
+.home-quick-links h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--pkmn-navy);
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--pkmn-yellow);
+}
+
+.home-latest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.home-latest-pack {
+  display: block;
+  padding: 0.6rem 0.75rem;
+  background: var(--pkmn-gray);
+  border-radius: var(--btn-radius);
+  text-decoration: none;
+  color: var(--pkmn-navy);
+  border: 1px solid transparent;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.home-latest-pack:hover {
+  background: #e5e9ee;
+  border-color: var(--pkmn-yellow);
+}
+
+.home-latest-pack .home-latest-title {
+  display: block;
+  font-weight: 600;
+}
+
+.home-latest-pack .home-latest-notes {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--pkmn-blue-dark);
+  margin-top: 0.2rem;
+}
+
+.home-latest-empty {
+  margin: 0 0 1rem;
+  color: var(--pkmn-blue-dark);
+}
+
 /* Primary CTA: Open a Pack style */
 .btn-primary {
   display: inline-flex;
@@ -162,6 +239,21 @@ body {
 }
 
 .btn-secondary:hover { background: var(--pkmn-navy); }
+
+/* Equal-width button row (e.g. Packs page actions) */
+.btn-row-equal {
+  display: flex;
+  gap: 1rem;
+}
+
+.btn-row-equal .btn-primary,
+.btn-row-equal .btn-secondary {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* Danger (delete) */
 .btn-danger {

@@ -24,7 +24,11 @@
 
 ## State and persistence
 
-- All state in `PersistedState`: `piles`, `settings`. Saved to a single JSON file (default `./data/state.json`). No auth; single-user localhost.
+- **Piles and settings**: `PersistedState` (`piles`, `settings`) in a single JSON file (default `./data/state.json`). No auth; single-user localhost.
+- **Packs**: Opened packs are stored separately so they can grow without bloating the main state file.
+  - **Pack list**: `./data/packs.json` — list of `{ id, created_at, title? }` for every opened pack (same directory as `state.json`; if `PPP_DATA` points to a file, its parent directory is used). `title` is shown on the list next to the date; notes are only on the pack page.
+  - **Per-pack data**: `./data/packs/<uuid>.json` — full record for one pack: `id`, `created_at`, `title` (short label, shown on list), `notes` (free-form string, e.g. who pulled; only on pack page), `slots` (slot_number, slot_role, pile_name, instruction_display, plus editable `card_name`, `card_notes` for what was pulled), `warning`. The list file also stores `title` per entry so the list view can show title next to the opened date without opening each pack.
+  - On first run, if `state.json` contains legacy `pack_history`, it is migrated into `packs.json` and `packs/<id>.json`; then `pack_history` is removed from the state file.
 
 ## Home hero: booster sprite sheet
 

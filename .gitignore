@@ -23,3 +23,5 @@ target
 #.idea/
 
 state.json
+packs.json
+packs/

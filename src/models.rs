@@ -111,3 +111,61 @@ impl Default for Settings {
 
 /// Critical low threshold: below this, pile is considered too small for reliable A/B drawing.
 pub const CRITICAL_LOW_THRESHOLD: u32 = 40;
+
+// --------------- Pack history (saved packs) ---------------
+
+/// One entry in the packs index (list of opened packs). Stored in packs.json.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackListEntry {
+    pub id: Uuid,
+    /// ISO 8601 datetime when the pack was opened.
+    pub created_at: String,
+    /// Short title for the pack (shown on list); separate from notes.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Notes (e.g. who pulled); shown under title on list as smaller text.
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Card names from slots (for list display), joined by middle dot.
+    #[serde(default)]
+    pub card_summary: Option<String>,
+}
+
+/// One slot in a saved pack: generated data plus editable fields for what was pulled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedPackSlot {
+    pub slot_number: u32,
+    pub slot_role: String,
+    pub pile_name: String,
+    /// A/B instruction string from generation (e.g. "A, B, A — 4").
+    pub instruction_display: String,
+    /// Editable: card name or identifier for what was pulled (e.g. "Charizard ex").
+    #[serde(default)]
+    pub card_name: Option<String>,
+    /// Editable: extra notes for this card (condition, variant, etc.).
+    #[serde(default)]
+    pub card_notes: Option<String>,
+    /// Legacy/optional: recognized card ID from image rec (if any).
+    #[serde(default)]
+    pub recognized_card_id: Option<String>,
+    #[serde(default)]
+    pub card_holo: Option<bool>,
+    #[serde(default)]
+    pub card_image_url: Option<String>,
+}
+
+/// Full record for one opened pack. Stored in data/packs/<id>.json.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackRecord {
+    pub id: Uuid,
+    /// ISO 8601 datetime when the pack was opened.
+    pub created_at: String,
+    /// Short title for the pack (shown on list); separate from notes.
+    #[serde(default)]
+    pub title: String,
+    /// General notes for the pack (e.g. who pulled it); only visible on the pack page.
+    #[serde(default)]
+    pub notes: String,
+    pub slots: Vec<SavedPackSlot>,
+    pub warning: Option<String>,
+}

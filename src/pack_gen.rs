@@ -17,7 +17,6 @@ pub struct SlotInstruction {
     pub slot_number: u32,
     /// Human-readable slot role (e.g. "Common", "Rare", "Energy").
     pub slot_role: String,
-    pub pile_id: Uuid,
     pub pile_name: String,
     pub instruction: AbInstruction,
 }
@@ -54,7 +53,6 @@ pub fn generate_pack(state: &mut PersistedState, rng: &mut impl Rng) -> Result<P
                 slots_out.push(SlotInstruction {
                     slot_number,
                     slot_role: slot_role_str.to_string(),
-                    pile_id: pile.id,
                     pile_name: pile.name.clone(),
                     instruction: inst,
                 });
@@ -66,7 +64,6 @@ pub fn generate_pack(state: &mut PersistedState, rng: &mut impl Rng) -> Result<P
                 slots_out.push(SlotInstruction {
                     slot_number,
                     slot_role: slot_role_str.to_string(),
-                    pile_id: pile.id,
                     pile_name: pile.name.clone(),
                     instruction: inst,
                 });
@@ -79,7 +76,6 @@ pub fn generate_pack(state: &mut PersistedState, rng: &mut impl Rng) -> Result<P
                 slots_out.push(SlotInstruction {
                     slot_number,
                     slot_role: slot_role_str.to_string(),
-                    pile_id: pile.id,
                     pile_name: pile.name.clone(),
                     instruction: inst,
                 });
