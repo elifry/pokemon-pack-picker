@@ -23,3 +23,6 @@ target
 #.idea/
 
 state.json
+
+# Upstream clone (clone via docs); not part of this repo
+tools/Trading-Card-Scanner
