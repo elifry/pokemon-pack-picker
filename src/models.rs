@@ -96,16 +96,12 @@ pub struct Settings {
     /// Energy type IDs to treat as "out" (excluded from energy draw).
     #[serde(default)]
     pub energy_types_out: Vec<String>,
-    /// Card recognition via camera: show scan button and store recognized cards (default true).
-    #[serde(default = "default_true")]
+    /// Card recognition via camera: show scan button and store recognized cards (default false).
+    #[serde(default)]
     pub image_rec_enabled: bool,
-    /// URL of local recognition service (e.g. http://127.0.0.1:5000/recognize). Empty = not configured.
+    /// URL of local recognition service (e.g. http://127.0.0.1:5001). Empty = not configured.
     #[serde(default)]
     pub image_rec_service_url: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for Settings {
@@ -115,7 +111,7 @@ impl Default for Settings {
             pack_type: PackTypeId::Modern,
             add_energy_to_packs: false,
             energy_types_out: Vec::new(),
-            image_rec_enabled: true,
+            image_rec_enabled: false,
             image_rec_service_url: None,
         }
     }

@@ -25,14 +25,14 @@
 ## State and persistence
 
 - All state in `PersistedState`: `piles`, `settings`, `pack_history`. Saved to a single JSON file (default `./data/state.json`). No auth; single-user localhost.
-- **Pack history**: Each generated pack is appended to `pack_history` (newest first). Each entry has `id`, `created_at`, `slots` (with A/B instruction and optional recognized card data). User can open **Pack history** and click a pack to view it at `/pack/result/:id`.
+- **Pack history**: Each generated pack is appended to `pack_history` (newest first). Each entry has `id`, `created_at`, `slots` (with A/B instruction and optional recognized card data). User can open **Pack history** and click a pack to view it at `/pack/result/:id`. From the pack result page or the history list, user can **delete** a pack (POST `/pack/result/:id/delete`); it is removed from history. User can **edit** a pack: for any slot that does not yet have card data, they can enter a Pokemon TCG API card id (e.g. `swsh12-123`) and submit **Look up**; the app fetches card details and stores them in that slot (same as after a scan). Slots that already have card data can be edited (name, holo, Regenerate image) as before.
 
 ## Card recognition (optional)
 
-- **Settings**: `image_rec_enabled` (default true), `image_rec_service_url` (optional). When enabled, each slot on the pack result page shows a camera button.
+- **Settings**: `image_rec_enabled` (default false), `image_rec_service_url` (optional). When enabled, each slot on the pack result page shows a camera button.
 - **Flow**: User taps camera → browser captures image → POST to `/pack/result/:id/slot/:n/scan` → server forwards image to local recognition service (POST `{url}/recognize`), expects JSON `{ "cardId": "setX-nnn" }` → server fetches card details from Pokemon TCG API and stores in that slot. If service URL is unset or request fails, API returns 503 and frontend shows a modal: disable card recognition or keep it on (link to setup guide).
 - **Disable**: POST `/settings/image-rec/disable` sets `image_rec_enabled = false`; camera buttons no longer appear.
-- **Pack detail**: For each slot, if we have recognized card data we show name, image, holo; user can edit name/holo and **Regenerate image** (refetch from API). Otherwise we show only the A/B instruction.
+- **Pack detail**: For each slot, if we have recognized card data we show name, image, holo; user can edit name/holo and **Regenerate image** (refetch from API). For slots without card data, user can add it by scanning (camera) or by entering a card id and **Look up** (fetches from Pokemon TCG API and fills the slot).
 - Setup: See **docs/image-recognition-setup.md** and in-app link to `/static/docs/image-recognition-setup.html`.
 
 ## Home hero: booster sprite sheet

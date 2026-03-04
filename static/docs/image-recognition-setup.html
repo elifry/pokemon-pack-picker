@@ -17,19 +17,19 @@
   </header>
   <main class="main-wrap">
     <h1 class="page-title">Card recognition setup (optional)</h1>
-    <p class="page-subtitle">When enabled in Settings, a camera button appears on each slot so you can scan cards and track what you pulled. No images are sent to third parties; they go only to the local service URL you configure.</p>
+    <p class="page-subtitle">Card recognition is off by default. When you enable it in Settings, a camera button appears on each slot so you can scan cards and track what you pulled. No images are sent to third parties; they go only to the local service URL you configure.</p>
     <div class="card-panel">
       <h2>Requirements</h2>
       <p>A local HTTP service that accepts a card image and returns a card identifier (e.g. Pokemon TCG API card id like <code>swsh12-123</code>).</p>
       <p>The app POSTs to <strong><code>{your URL}/recognize</code></strong> with multipart form data: field name <code>image</code>, JPEG or PNG. The service should return JSON: <code>{"cardId": "setX-nnn"}</code> or <code>{"card_id": "setX-nnn"}</code>.</p>
       <h2>Self-hosted options</h2>
-      <p>Run a pipeline that (1) detects the card in the image (e.g. YOLO), (2) identifies it (e.g. ResNet50 vs official card images), (3) returns the <a href="https://docs.pokemontcg.io/" target="_blank" rel="noopener">Pokemon TCG API</a> card id.</p>
-      <p>Example: <a href="https://github.com/lo-calvin/Trading-Card-Scanner" target="_blank" rel="noopener">lo-calvin/Trading-Card-Scanner</a> (Python, YOLOv11 + ResNet50). Expose a small HTTP endpoint that accepts an image and returns <code>{"cardId": "..."}</code>.</p>
+      <p>Pack Picker works with <strong>any</strong> service that implements the contract above (POST <code>image</code> → JSON <code>cardId</code>). You are not locked into a specific tool or API.</p>
+      <p>One optional example: this repo includes a wrapper for <a href="https://github.com/lo-calvin/Trading-Card-Scanner" target="_blank" rel="noopener">lo-calvin/Trading-Card-Scanner</a> (Python, YOLOv11 + ResNet18) under <code>tools/trading-card-scanner-api/</code>. Clone that project, install deps, then from their repo root run the wrapper’s <code>server.py</code>. See <code>tools/trading-card-scanner-api/README.md</code> for full steps.</p>
       <h2>Configuring the app</h2>
       <ol>
-        <li>Start your recognition service (e.g. <code>http://127.0.0.1:5000</code>).</li>
-        <li>In <a href="/settings">Settings</a>, check <strong>Enable card recognition</strong>.</li>
-        <li>Set <strong>Recognition service URL</strong> to the base URL (e.g. <code>http://127.0.0.1:5000</code>). The app will POST to <code>{url}/recognize</code>.</li>
+        <li>Start your recognition service (e.g. <code>http://127.0.0.1:5001</code>; the bundled script uses 5001 to avoid AirPlay on 5000).</li>
+        <li>In <a href="/settings">Settings</a>, check <strong>Enable card recognition</strong> (it is off by default).</li>
+        <li>Set <strong>Recognition service URL</strong> to the base URL (e.g. <code>http://127.0.0.1:5001</code>). The app will POST to <code>{url}/recognize</code>.</li>
       </ol>
       <p>If the URL is empty, tapping the camera button will show a message that recognition isn’t set up and offer to disable the feature.</p>
       <p><a href="/settings" class="btn-primary">Open Settings</a> <a href="/" class="btn-secondary">Back home</a></p>

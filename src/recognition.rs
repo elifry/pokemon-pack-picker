@@ -39,10 +39,9 @@ pub async fn recognize_card(
         .await
         .map_err(|e| RecognitionError::Service(e.to_string()))?;
     if !resp.status().is_success() {
-        return Err(RecognitionError::Service(format!(
-            "recognition service returned {}",
-            resp.status()
-        )));
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(RecognitionError::ServiceUnavailable(status, body));
     }
     let body: RecognitionResponse = resp
         .json()
@@ -58,6 +57,8 @@ pub enum RecognitionError {
     NotConfigured,
     Client(String),
     Service(String),
+    /// Recognition service returned non-2xx (status, response body).
+    ServiceUnavailable(u16, String),
     NoCardId,
 }
 

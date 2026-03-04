@@ -130,6 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/pack", post(generate_pack))
         .route("/pack/history", get(pack_history_index))
         .route("/pack/result/:id", get(pack_result_by_id))
+        .route("/pack/result/:id/delete", post(delete_pack))
         .route("/pack/result/:id/slot/:slot/scan", post(scan_slot_card))
         .route("/pack/result/:id/slot/:slot/card", post(update_slot_card))
         .route("/settings/image-rec/disable", post(disable_image_rec))
@@ -346,6 +347,7 @@ async fn pack_result_by_id(
 <div class="slot-cards">{}</div>
 <div class="card-panel">
 <p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">My piles</a> &nbsp; <a href="/pack/history" class="btn-secondary">Pack history</a></p>
+<p class="pack-actions-secondary"><form method="post" action="/pack/result/{}/delete" style="display:inline" onsubmit="return confirm('Delete this pack from history?');"><button type="submit" class="btn-danger">Delete this pack</button></form></p>
 </div>
 <div id="recognition-modal" class="recognition-modal" style="display:none" aria-hidden="true">
 <div class="recognition-modal-content">
@@ -356,7 +358,7 @@ async fn pack_result_by_id(
 </div>
 </div>
 <script>{}</script>"#,
-        warning, slot_cards, script
+        warning, slot_cards, id, script
     );
     Html(base_layout("Your pack", &content)).into_response()
 }
@@ -404,7 +406,14 @@ fn render_slot_cards_for_pack(
                     }
                 )
             } else {
-                String::new()
+                format!(
+                    r#"<span class="slot-card-details"><form method="post" action="/pack/result/{}/slot/{}/card" class="slot-set-card-form" style="display:inline">
+<input type="text" name="card_id" placeholder="Card ID (e.g. swsh12-123)" size="18" required>
+<button type="submit" class="btn-small">Look up</button>
+</form></span>"#,
+                    pack_id,
+                    s.slot_number
+                )
             };
             let camera_btn = if image_rec_enabled {
                 format!(
@@ -481,13 +490,31 @@ function initRecognition(){
             fd.append('image', blob, 'card.jpg');
             fetch('/pack/result/' + packId + '/slot/' + slot + '/scan', { method: 'POST', body: fd })
               .then(function(r){
-                if (r.status === 503) throw { notConfigured: true };
+                if (r.status === 503) {
+                  return r.text().then(function(text){
+                    var d = {};
+                    try { d = JSON.parse(text); } catch(e) {}
+                    throw { notConfigured: true, error: (d && d.error) ? d.error : '', detail: (d && d.detail) ? d.detail : '', raw: text };
+                  });
+                }
                 if (!r.ok) throw new Error('Scan failed');
                 window.location.reload();
               })
               .catch(function(e){
-                if (e && e.notConfigured) showModal("Card recognition isn't set up. Disable it or set up the local service (see Setup guide).");
-                else alert('Scan failed. Try again or disable card recognition in Settings.');
+                if (e && e.notConfigured) {
+                  var msg, raw = (e && e.raw) ? e.raw : '';
+                  if (e.error === 'not_configured')
+                    msg = "Recognition service URL is not set. Go to Settings and enter the URL (e.g. http://127.0.0.1:5001), then Save settings.";
+                  else if (e.error === 'card_not_identified' || raw.indexOf('card_not_identified') !== -1 || raw.indexOf('could not be identified') !== -1 || raw.indexOf('no cards detected') !== -1)
+                    msg = "Card not found. Try again? Use good lighting, hold the card flat and fill the frame, and avoid glare. If it still fails, the card may not be in the recognition database (see Setup guide).";
+                  else if ((e.detail && (e.detail.indexOf('model') !== -1 || e.detail.indexOf('not load') !== -1 || e.detail.indexOf('weight') !== -1)) || raw.indexOf('model') !== -1 || raw.indexOf('weight') !== -1)
+                    msg = "Recognition service is running but the model didn't load (missing weight files). See Setup guide or add the YOLO/ResNet files to the recognition tool.";
+                  else if (e.detail && (e.detail.indexOf('could not be identified') !== -1 || e.detail.indexOf('no cards detected') !== -1 || e.detail.indexOf('no match') !== -1))
+                    msg = "The service detected a card but couldn't identify it (no match in the database or TCG API lookup failed). Try better lighting, a clearer photo, or add more cards to the embedding set (see Setup guide).";
+                  else
+                    msg = "Could not reach the recognition service. In Settings, set Recognition service URL to e.g. http://127.0.0.1:5001 and ensure the recognition API is running (run ./tools/run-recognition-api.sh). See Setup guide.";
+                  showModal(msg);
+                } else alert('Scan failed. Try again or disable card recognition in Settings.');
               });
           }, 'image/jpeg', 0.9);
         }
@@ -514,10 +541,11 @@ async fn pack_history_index(State(state): State<SharedState>) -> impl IntoRespon
         .map(|p| {
             let date = p.created_at.get(..10).unwrap_or(&p.created_at);
             format!(
-                r#"<tr><td><a href="/pack/result/{}">Pack — {}</a></td><td>{} slots</td></tr>"#,
+                r#"<tr><td><a href="/pack/result/{}">Pack — {}</a></td><td>{} slots</td><td class="cell-actions"><form method="post" action="/pack/result/{}/delete" style="display:inline" onsubmit="return confirm('Delete this pack?');"><button type="submit" class="btn-danger btn-small">Delete</button></form></td></tr>"#,
                 p.id,
                 html_escape(date),
-                p.slots.len()
+                p.slots.len(),
+                p.id
             )
         })
         .collect::<Vec<_>>()
@@ -526,7 +554,7 @@ async fn pack_history_index(State(state): State<SharedState>) -> impl IntoRespon
         r#"<h1 class="page-title">Pack history</h1>
 <p class="page-subtitle">Click a pack to see slot instructions and any recognized cards.</p>
 <div class="card-panel">
-<table class="data-table"><thead><tr><th>Pack</th><th>Slots</th></tr></thead><tbody>
+<table class="data-table"><thead><tr><th>Pack</th><th>Slots</th><th></th></tr></thead><tbody>
 {}
 </tbody></table>
 </div>
@@ -596,6 +624,24 @@ async fn scan_slot_card(
     }
     let card_id = match recognition::recognize_card(&url, &image_bytes).await {
         Ok(id) => id,
+        Err(recognition::RecognitionError::ServiceUnavailable(status, _body)) => {
+            // 422 from recognition service = card detected but not identified (e.g. "Card not found")
+            let (error, detail) = if status == 422 {
+                (
+                    "card_not_identified",
+                    "Card could not be identified. Try again with better lighting or a clearer photo.",
+                )
+            } else {
+                ("service_unavailable", _body.trim())
+            };
+            let json = serde_json::json!({ "error": error, "detail": detail }).to_string();
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                [("content-type", "application/json")],
+                json,
+            )
+                .into_response();
+        }
         Err(_) => {
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -647,6 +693,8 @@ struct UpdateSlotCardForm {
     card_name: Option<String>,
     card_holo: Option<String>,
     regenerate_image: Option<String>,
+    /// Set card by Pokemon TCG API id (e.g. swsh12-123); fetches details and fills slot.
+    card_id: Option<String>,
 }
 
 async fn update_slot_card(
@@ -668,13 +716,30 @@ async fn update_slot_card(
     let Some(slot_entry) = entry.slots.iter_mut().find(|s| s.slot_number == slot) else {
         return Redirect::to(&format!("/pack/result/{}", id)).into_response();
     };
+    // Set card by ID (look up from TCG API and fill slot)
+    if let Some(ref raw_id) = f.card_id {
+        let card_id = raw_id.trim();
+        if !card_id.is_empty() {
+            if let Ok(details) = recognition::fetch_card_details(card_id).await {
+                slot_entry.recognized_card_id = Some(details.id);
+                slot_entry.card_name = Some(details.name);
+                slot_entry.card_image_url = Some(details.image_url);
+            }
+            // If fetch failed we still redirect back; user can retry with correct id
+            drop(guard);
+            if save(&state).await.is_err() {
+                tracing::error!("Failed to save state after set card");
+            }
+            return Redirect::to(&format!("/pack/result/{}", id)).into_response();
+        }
+    }
     if let Some(name) = &f.card_name {
         slot_entry.card_name = Some(name.trim().to_string());
     }
     slot_entry.card_holo = Some(f.card_holo.as_deref() == Some("1"));
     if f.regenerate_image.as_deref() == Some("1") {
-        if let Some(ref card_id) = slot_entry.recognized_card_id {
-            if let Ok(details) = recognition::fetch_card_details(card_id).await {
+        if let Some(ref cid) = slot_entry.recognized_card_id {
+            if let Ok(details) = recognition::fetch_card_details(cid).await {
                 slot_entry.card_name = Some(details.name);
                 slot_entry.card_image_url = Some(details.image_url);
             }
@@ -685,6 +750,22 @@ async fn update_slot_card(
         tracing::error!("Failed to save state after card update");
     }
     Redirect::to(&format!("/pack/result/{}", id)).into_response()
+}
+
+async fn delete_pack(
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let mut guard = state.write().await;
+    guard
+        .data
+        .pack_history
+        .retain(|p| p.id != id);
+    drop(guard);
+    if save(&state).await.is_err() {
+        tracing::error!("Failed to save state after delete pack");
+    }
+    Redirect::to("/pack/history").into_response()
 }
 
 async fn disable_image_rec(State(state): State<SharedState>) -> impl IntoResponse {
@@ -1119,7 +1200,7 @@ async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
 <h2>Card recognition (optional)</h2>
 <p>When enabled, a camera button appears on each slot so you can scan cards and track what you pulled. <a href="/static/docs/image-recognition-setup.html" target="_blank" rel="noopener">How to set up the local recognition service</a>.</p>
 <div class="form-group"><label class="checkbox-label"><input type="checkbox" name="image_rec_enabled" value="1" {}> Enable card recognition (camera scan)</label></div>
-<div class="form-group"><label>Recognition service URL</label><input type="url" name="image_rec_service_url" value="{}" placeholder="e.g. http://127.0.0.1:5000"></div>
+<div class="form-group"><label>Recognition service URL</label><input type="url" name="image_rec_service_url" value="{}" placeholder="e.g. http://127.0.0.1:5001"><p class="form-hint">Required for camera scan. Start the service with <code>./tools/run-recognition-api.sh</code>, then enter <code>http://127.0.0.1:5001</code> here and save.</p></div>
 <button type="submit" class="btn-primary">Save settings</button> <a href="/" class="btn-secondary">Back home</a>
 </form>
 </div>"#,

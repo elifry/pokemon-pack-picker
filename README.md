@@ -41,7 +41,20 @@ PPP_DATA=/path/to/state.json cargo run
 
 ## Card recognition (optional)
 
-Card recognition is **optional** and **on by default**. When enabled, each slot on a new pack shows a camera button: you scan the card you put in that slot and a **local** recognition service identifies it; the app stores the result and can show name, set, and image (from the Pokemon TCG API). You can turn it off in Settings—the camera buttons then disappear and the app works as before. To set up the local recognition service, see **[Image recognition setup](docs/image-recognition-setup.md)**.
+Card recognition is **optional** and **off by default**. Turn it on in Settings to show a camera button on each slot when you open a pack; you scan the card and a **local** recognition service identifies it, and the app stores the result (name, set, image from the Pokemon TCG API). You can turn it off again in Settings—the camera buttons then disappear.
+
+**Quick setup (bundled Trading-Card-Scanner wrapper):**
+
+1. **Clone and install** (one-time): the repo includes a clone of [Trading-Card-Scanner](https://github.com/lo-calvin/Trading-Card-Scanner) under `tools/Trading-Card-Scanner`. From the pack-picker root, create a venv and install deps:
+   ```bash
+   cd tools/Trading-Card-Scanner && python3 -m venv venv && . venv/bin/activate
+   pip install matplotlib_inline matplotlib ipython pokemontcgsdk ultralytics torchvision requests dotenv pandas imagehash streamlit flask
+   ```
+2. **Model weights** (one-time): from `tools/Trading-Card-Scanner`, run `python setup_weights.py` to download YOLO and ResNet18 weights and build a minimal card-embedding set from the Pokemon TCG API.
+3. **Start the recognition API**: from the pack-picker root, run `./tools/run-recognition-api.sh` (listens on port 5001).
+4. **Configure Pack Picker**: in **Settings**, check **Enable card recognition** and set **Recognition service URL** to `http://127.0.0.1:5001`, then save.
+
+The app works with any service that implements the documented contract; the above is one optional example. Full details: **[Image recognition setup](docs/image-recognition-setup.md)** and **tools/trading-card-scanner-api/README.md**.
 
 ## Requirements
 

@@ -177,9 +177,13 @@ body {
 
 .btn-danger:hover { color: var(--pkmn-red-dark); }
 
+.pack-actions-secondary { margin-top: 0.75rem; }
+
 /* Forms */
 .form-group { margin-bottom: 1rem; }
 .form-group label { display: block; font-weight: 600; margin-bottom: 0.35rem; color: var(--pkmn-navy); }
+.form-hint { font-size: 0.875rem; color: #555; margin-top: 0.35rem; }
+.form-hint code { font-size: 0.85em; background: #eee; padding: 0.1em 0.3em; border-radius: 3px; }
 .form-group input[type="text"],
 .form-group input[type="number"],
 .form-group select {
