@@ -232,6 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/settings", get(settings_form).post(update_settings))
         .route("/packs", get(packs_index))
         .route("/packs/:id", get(pack_detail_form).post(update_pack))
+        .route("/packs/:id/delete", post(delete_pack))
         .with_state(app_state);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -280,7 +281,7 @@ fn base_layout(title: &str, content: &str) -> String {
 
 // --------------- Home ---------------
 
-const HOME_LATEST_PACKS: usize = 8;
+const HOME_LATEST_PACKS: usize = 4;
 
 async fn index(State(state): State<SharedState>) -> impl IntoResponse {
     let guard = state.read().await;
@@ -360,6 +361,7 @@ async fn index(State(state): State<SharedState>) -> impl IntoResponse {
 <div class="home-latest-packs">
 <h2>Latest packs</h2>
 <div class="home-latest-list">{}</div>
+<p><a href="/packs" class="btn-secondary btn-compact">See more</a></p>
 </div>
 <div class="home-quick-links">
 <h2>Quick links</h2>
@@ -433,7 +435,7 @@ async fn generate_pack(State(state): State<SharedState>) -> impl IntoResponse {
                 );
                 let _ = save_packs_list(&data_dir, &list);
             }
-            let body = render_pack_result(&result, Some(pack_id));
+            let body = render_pack_result(&result);
             Html(body).into_response()
         }
         Err(e) => {
@@ -503,7 +505,7 @@ fn parse_datetime_local_to_rfc3339(s: &str) -> Option<String> {
         })
 }
 
-fn render_pack_result(result: &pack_gen::PackResult, pack_id: Option<Uuid>) -> String {
+fn render_pack_result(result: &pack_gen::PackResult) -> String {
     let slot_cards: String = result
         .slots
         .iter()
@@ -533,17 +535,8 @@ fn render_pack_result(result: &pack_gen::PackResult, pack_id: Option<Uuid>) -> S
 <p class="page-subtitle">Fill each slot in order. Go to the pile, apply the A/B sequence (A = top half, B = bottom half), then use the final number when you have 10 or fewer cards left.</p>
 {}
 <div class="slot-cards">{}</div>
-<div class="card-panel">
-<p><a href="/" class="btn-primary">Open another pack</a> &nbsp; <a href="/piles" class="btn-secondary">Piles</a>{} &nbsp; <a href="/settings" class="btn-secondary">Settings</a></p>
-</div>"#,
-        warning,
-        slot_cards,
-        pack_id
-            .map(|id| format!(
-                " &nbsp; <a href=\"/packs/{}\" class=\"btn-secondary\">View / edit this pack</a>",
-                id
-            ))
-            .unwrap_or_default()
+<div class="pack-result-actions btn-row-equal"><a href="/" class="btn-primary">Open another pack</a><a href="/piles" class="btn-secondary">My Piles</a></div>"#,
+        warning, slot_cards
     );
     base_layout("Your pack", &content)
 }
@@ -1041,6 +1034,7 @@ async fn pack_detail_form(
 {}
 </tbody></table>
 <button type="submit" class="btn-primary">Back to packs</button>
+<form action="/packs/{}/delete" method="post" style="display:inline; margin-left: 0.5rem;" onsubmit="return confirm('Delete this pack?');"><button type="submit" class="btn-danger">Delete pack</button></form>
 </form>
 <script>
 (function() {{
@@ -1063,7 +1057,8 @@ async fn pack_detail_form(
         title_esc,
         html_escape(&created_at_to_datetime_local_value(&record.created_at)),
         notes_esc,
-        slot_rows
+        slot_rows,
+        id
     );
     Html(base_layout("Edit pack", &content)).into_response()
 }
@@ -1143,6 +1138,19 @@ async fn update_pack(
     }
 }
 
+async fn delete_pack(State(state): State<SharedState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    let guard = state.read().await;
+    let data_dir = guard.data_dir.clone();
+    drop(guard);
+    if let Ok(mut list) = state::load_packs_list(&data_dir) {
+        list.retain(|e| e.id != id);
+        let _ = state::save_packs_list(&data_dir, &list);
+    }
+    let path = state::pack_file_path(&data_dir, id);
+    let _ = std::fs::remove_file(&path);
+    (StatusCode::FOUND, [(LOCATION, "/packs".to_string())], ()).into_response()
+}
+
 // --------------- Settings ---------------
 
 async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
@@ -1186,14 +1194,28 @@ async fn settings_form(State(state): State<SharedState>) -> impl IntoResponse {
         r#"<h1 class="page-title">Settings</h1>
 <p class="page-subtitle">Pack format and energy options. Changes apply to the next pack you open.</p>
 <div class="card-panel">
-<form method="post" action="/settings">
+<form id="settings-form" method="post" action="/settings">
 <div class="form-group"><label>Cards per pack</label><input type="number" name="pack_size" value="{}" min="1" max="20"></div>
 <div class="form-group"><label>Pack type</label><select name="pack_type">{}</select></div>
 <div class="form-group"><label class="checkbox-label"><input type="checkbox" name="add_energy" value="1" {}> Add Energy card to packs</label></div>
 <div class="form-group"><label>Energy types to exclude (comma-separated)</label><input type="text" name="energy_types_out" value="{}" placeholder="e.g. Fire, Water"></div>
-<button type="submit" class="btn-primary">Save settings</button> <a href="/" class="btn-secondary">Back home</a>
+<button type="submit" class="btn-primary">Back home</button>
 </form>
-</div>"#,
+</div>
+<script>
+(function() {{
+  var form = document.getElementById('settings-form');
+  if (!form) return;
+  function save() {{
+    var fd = new FormData(form);
+    fetch(form.action, {{ method: 'POST', body: fd, headers: {{ 'X-Requested-With': 'XMLHttpRequest' }} }});
+  }}
+  [].slice.call(form.querySelectorAll('input, select')).forEach(function(el) {{
+    el.addEventListener('blur', save);
+    el.addEventListener('change', save);
+  }});
+}})();
+</script>"#,
         s.pack_size,
         pack_type_options,
         if s.add_energy_to_packs { "checked" } else { "" },
@@ -1212,6 +1234,7 @@ struct SettingsForm {
 
 async fn update_settings(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Form(f): Form<SettingsForm>,
 ) -> impl IntoResponse {
     let mut guard = state.write().await;
@@ -1238,5 +1261,13 @@ async fn update_settings(
     if save(&state).await.is_err() {
         tracing::error!("Failed to save state");
     }
-    Redirect::to("/settings")
+    let is_ajax = headers
+        .get("X-Requested-With")
+        .and_then(|v| v.to_str().ok())
+        == Some("XMLHttpRequest");
+    if is_ajax {
+        (StatusCode::NO_CONTENT, ()).into_response()
+    } else {
+        (StatusCode::FOUND, [(LOCATION, "/".to_string())], ()).into_response()
+    }
 }

@@ -240,6 +240,12 @@ body {
 
 .btn-secondary:hover { background: var(--pkmn-navy); }
 
+.btn-compact {
+  font-size: 0.875rem;
+  padding: 0.35rem 0.75rem;
+  font-weight: 500;
+}
+
 /* Equal-width button row (e.g. Packs page actions) */
 .btn-row-equal {
   display: flex;
@@ -347,6 +353,7 @@ body {
   border-radius: 6px;
   border: 1px solid #ddd;
 }
+.pack-result-actions { margin-top: 1.75rem; }
 
 /* Hero on home: pack graphic + CTA (title and content beside pack). Pack size set from server. */
 .hero {
