@@ -257,7 +257,7 @@ fn base_layout(title: &str, content: &str) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{} – Pokémon TCG Pack Picker</title>
 <link rel="icon" type="image/svg+xml" href="/static/images/logo.svg">
-<link rel="stylesheet" href="/static/css/style.css">
+<link rel="stylesheet" href="/static/css/style.css?v=2">
 </head>
 <body>
 <header class="site-header">
@@ -535,7 +535,7 @@ fn render_pack_result(result: &pack_gen::PackResult) -> String {
 <p class="page-subtitle">Fill each slot in order. Go to the pile, apply the A/B sequence (A = top half, B = bottom half), then use the final number when you have 10 or fewer cards left.</p>
 {}
 <div class="slot-cards">{}</div>
-<div class="pack-result-actions btn-row-equal"><a href="/" class="btn-primary">Open another pack</a><a href="/piles" class="btn-secondary">My Piles</a></div>"#,
+<div class="pack-result-actions pack-edit-actions"><a href="/" class="btn-primary">Open another pack</a><a href="/piles" class="btn-secondary">My Piles</a></div>"#,
         warning, slot_cards
     );
     base_layout("Your pack", &content)
@@ -967,7 +967,7 @@ async fn packs_index(State(state): State<SharedState>) -> impl IntoResponse {
 {}
 </tbody></table>
 </div>
-<div class="btn-row-equal"><a href="/" class="btn-primary">Open a pack</a><a href="/piles" class="btn-secondary">Piles</a></div>"#,
+<div class="pack-edit-actions"><a href="/" class="btn-primary">Open a pack</a><a href="/piles" class="btn-secondary">Piles</a></div>"#,
         if rows.is_empty() {
             r#"<tr><td colspan="3">No packs yet. <a href="/">Open a pack</a> to get started.</td></tr>"#.to_string()
         } else {
@@ -1033,9 +1033,13 @@ async fn pack_detail_form(
 <table class="data-table"><thead><tr><th>Slot</th><th>Instruction</th><th>Card name</th><th>Card notes</th></tr></thead><tbody>
 {}
 </tbody></table>
-<button type="submit" class="btn-primary">Back to packs</button>
-<form action="/packs/{}/delete" method="post" style="display:inline; margin-left: 0.5rem;" onsubmit="return confirm('Delete this pack?');"><button type="submit" class="btn-danger">Delete pack</button></form>
 </form>
+<div class="pack-edit-actions">
+<button type="submit" form="pack-edit-form" class="btn-primary">Back to packs</button>
+<form action="/packs/{}/delete" method="post" class="pack-delete-form" onsubmit="return confirm('Are you sure? This pack will be deleted.');">
+<button type="submit" class="btn-danger">Delete pack</button>
+</form>
+</div>
 <script>
 (function() {{
   var form = document.getElementById('pack-edit-form');
